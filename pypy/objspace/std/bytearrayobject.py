@@ -197,7 +197,7 @@ class W_BytearrayObject(W_Root):
         w_dict = self.getdict(space)
         if w_dict is None:
             w_dict = space.w_None
-        s, _, lgt = str_decode_latin_1(''.join(self.getdata()), 'strict',
+        s, _, lgt = str_decode_latin_1(self.charbuf_w(space), 'strict',
             True, None)
         return space.newtuple([
             space.type(self), space.newtuple2(
@@ -286,7 +286,7 @@ class W_BytearrayObject(W_Root):
         return space.newtext(buf.build())
 
     def descr_str(self, space):
-        return space.newtext(''.join(self.getdata()))
+        return space.newtext(self.charbuf_w(space))
 
     def descr_eq(self, space, w_other):
         if isinstance(w_other, W_BytearrayObject):
