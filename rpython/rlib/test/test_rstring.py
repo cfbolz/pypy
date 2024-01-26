@@ -3,6 +3,7 @@ import sys, py
 from rpython.rlib.rstring import StringBuilder, UnicodeBuilder, split, rsplit
 from rpython.rlib.rstring import replace, startswith, endswith, replace_count
 from rpython.rlib.rstring import find, rfind, count, _search, SEARCH_COUNT, SEARCH_FIND
+from rpython.rlib.rstring import charlist_slice_to_str
 from rpython.rlib.buffer import StringBuffer
 from rpython.rtyper.test.tool import BaseRtypingTest
 
@@ -267,6 +268,13 @@ def test_search():
     check_search(count, 'a', 'ab', 0, 1, res=0)
     check_search(count, 'ac', 'ab', 0, 2, res=0)
 
+def test_charlist_slice_to_str():
+    s = "abcdefghijkl"
+    l = list(s)
+    assert charlist_slice_to_str(l) == s
+    assert charlist_slice_to_str(l, 5) == s[5:]
+    assert charlist_slice_to_str(l, 5, 7) == s[5:7]
+
 
 class TestTranslates(BaseRtypingTest):
     def test_split_rsplit(self):
@@ -308,6 +316,16 @@ class TestTranslates(BaseRtypingTest):
             return res
         res = self.interpret(fn, [])
         assert res
+
+    def test_charlist_slice_to_str(self):
+        def fn():
+            s = "abcdefghijkl"
+            l = list(s)
+            assert charlist_slice_to_str(l) == s
+            assert charlist_slice_to_str(l, 5) == s[5:]
+            assert charlist_slice_to_str(l, 5, 7) == s[5:7]
+        self.interpret(fn, [])
+
 
 @given(u=st.text(), prefix=st.text(), suffix=st.text())
 def test_hypothesis_search(u, prefix, suffix):

@@ -1006,6 +1006,58 @@ class PrebuiltUnicodeBuilderEntry(ExtRegistryEntry):
     def compute_annotation(self):
         return SomeUnicodeBuilder()
 
+@not_rpython
+def charlist_slice_to_str(l, start=0, end=-1):
+    assert start >= 0
+    if end < 0:
+        end = len(l)
+    return "".join(l[start:end])
+
+
+class Entry(ExtRegistryEntry):
+    _about_ = charlist_slice_to_str
+
+    def compute_result_annotation(self, s_list, s_start=None, s_end=None):
+        from rpython.annotator import model as annmodel
+        from rpython.rlib import debug
+        if annmodel.s_None.contains(s_list):
+            return    # "None", will likely be generalized later
+        if not isinstance(s_list, annmodel.SomeList):
+            raise Exception("not a list, got %r" % (s_list,))
+        if not isinstance(s_list.listdef.listitem.s_value,
+                          (annmodel.SomeChar, annmodel.SomeImpossibleValue)):
+            raise debug.NotAListOfChars
+        s_list.listdef.resize() # XXX could be removed
+        return annmodel.SomeString()
+
+    def specialize_call(self, hop):
+        from rpython.rtyper.lltypesystem import lltype, llmemory
+        from rpython.flowspace.model import Constant
+        v_list = hop.inputargs(*hop.args_r)
+        if len(v_list) < 2:
+            v_list.append(Constant(0, lltype.Signed))
+        if len(v_list) < 3:
+            v_list.append(Constant(-1, lltype.Signed))
+        hop.exception_cannot_occur()
+        return hop.gendirectcall(ll_charlist_slice_to_str,
+                                 *v_list)
+
+def ll_charlist_slice_to_str(lst, start, end):
+    from rpython.rtyper.lltypesystem import rstr, llmemory, lltype
+    if end < 0:
+        end = lst.length
+    length = end - start
+    res = rstr.mallocstr(length)
+    array = lst.items
+    TP = lltype.typeOf(array).TO
+    _content_offest = (llmemory.itemoffsetof(TP, 0) +
+                       llmemory.sizeof(lltype.Char) * start)
+    # no GC operations must happen
+    asrc = llmemory.cast_ptr_to_adr(array) + _content_offest
+    adst = rstr._get_raw_buf_string(rstr.STR, res, 0)
+    llmemory.raw_memcopy(asrc, adst, llmemory.sizeof(lltype.Char) * length)
+    # GC operations can happen again
+    return res
 
 #___________________________________________________________________
 # Support functions for SomeString.no_nul
