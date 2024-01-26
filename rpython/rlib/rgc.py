@@ -1269,11 +1269,6 @@ class GetTypeidEntry(ExtRegistryEntry):
 # ____________________________________________________________
 
 
-class _rawptr_missing_item(object):
-    pass
-_rawptr_missing_item = _rawptr_missing_item()
-
-
 class _ResizableListSupportingRawPtr(list):
     """Calling this class is a no-op after translation.
 
