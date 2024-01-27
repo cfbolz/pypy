@@ -5,7 +5,7 @@ import sys
 from rpython.annotator.model import (SomeObject, SomeString, s_None, SomeChar,
     SomeInteger, SomeUnicodeCodePoint, SomeUnicodeString, SomePBC)
 from rpython.rtyper.llannotation import SomePtr
-from rpython.rlib import jit
+from rpython.rlib import jit, rgc
 from rpython.rlib.objectmodel import newlist_hint, resizelist_hint, specialize, not_rpython
 from rpython.rlib.rarithmetic import ovfcheck, LONG_BIT as BLOOM_WIDTH, intmask
 from rpython.rtyper.extregistry import ExtRegistryEntry
@@ -1027,7 +1027,6 @@ class Entry(ExtRegistryEntry):
         if not isinstance(s_list.listdef.listitem.s_value,
                           (annmodel.SomeChar, annmodel.SomeImpossibleValue)):
             raise debug.NotAListOfChars
-        s_list.listdef.resize() # XXX could be removed
         return annmodel.SomeString()
 
     def specialize_call(self, hop):
@@ -1042,13 +1041,29 @@ class Entry(ExtRegistryEntry):
         return hop.gendirectcall(ll_charlist_slice_to_str,
                                  *v_list)
 
+@jit.look_inside_iff(lambda lst, start, end: jit.isconstant(lst.ll_length()) and jit.isvirtual(lst))
 def ll_charlist_slice_to_str(lst, start, end):
-    from rpython.rtyper.lltypesystem import rstr, llmemory, lltype
+    from rpython.rtyper.lltypesystem import rstr
     if end < 0:
-        end = lst.length
+        end = lst.ll_length()
     length = end - start
     res = rstr.mallocstr(length)
-    array = lst.items
+    array = lst.ll_items()
+    if jit.we_are_jitted() or rgc.must_split_gc_address_space():
+        i = 0
+        j = start
+        while j < end:
+            res.chars[i] = array[j]
+            i += 1
+            j += 1
+    else:
+        _ll_copy_charlist_slice_to_str(array, start, length, res)
+    return res
+
+@rgc.no_collect
+@jit.dont_look_inside
+def _ll_copy_charlist_slice_to_str(array, start, length, res):
+    from rpython.rtyper.lltypesystem import rstr, llmemory, lltype
     TP = lltype.typeOf(array).TO
     _content_offest = (llmemory.itemoffsetof(TP, 0) +
                        llmemory.sizeof(lltype.Char) * start)
@@ -1057,8 +1072,6 @@ def ll_charlist_slice_to_str(lst, start, end):
     adst = rstr._get_raw_buf_string(rstr.STR, res, 0)
     llmemory.raw_memcopy(asrc, adst, llmemory.sizeof(lltype.Char) * length)
     # GC operations can happen again
-    return res
-
 #___________________________________________________________________
 # Support functions for SomeString.no_nul
 

@@ -320,6 +320,13 @@ class TestTranslates(BaseRtypingTest):
     def test_charlist_slice_to_str(self):
         def fn():
             s = "abcdefghijkl"
+            # resizable case
+            l = list(s)
+            l.append('x')
+            l.pop()
+            assert charlist_slice_to_str(l) == s
+            assert charlist_slice_to_str(l, 5) == s[5:]
+            assert charlist_slice_to_str(l, 5, 7) == s[5:7]
             l = list(s)
             assert charlist_slice_to_str(l) == s
             assert charlist_slice_to_str(l, 5) == s[5:]
