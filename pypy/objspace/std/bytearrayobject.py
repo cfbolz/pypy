@@ -3,6 +3,7 @@
 from rpython.rlib.objectmodel import (
     import_from_mixin, newlist_hint, resizelist_hint, specialize)
 from rpython.rlib.rstring import StringBuilder, ByteListBuilder
+from rpython.rlib.rstring import charlist_slice_to_str
 from rpython.rlib.debug import check_list_of_chars, check_nonneg
 from rpython.rtyper.lltypesystem import rffi
 from rpython.rlib.rgc import (resizable_list_supporting_raw_ptr,
@@ -57,7 +58,7 @@ class W_BytearrayObject(W_Root):
         return BytearrayBuffer(self)
 
     def charbuf_w(self, space):
-        return ''.join(self.getdata())
+        return charlist_slice_to_str(self._data, self._offset)
 
     def bytearray_list_of_chars_w(self, space):
         return self.getdata()

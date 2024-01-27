@@ -820,12 +820,10 @@ class LLHelpers(AbstractLLHelpers):
     @staticmethod
     @jit.look_inside_iff(lambda length, chars, RES: jit.isconstant(length) and jit.isvirtual(chars))
     def ll_join_chars(length, chars, RES):
-        # no need to optimize this, will be replaced by string builder
-        # at some point soon
+        from rpython.rlib.rstring import ll_charlist_slice_to_str
         num_chars = length
         if RES is StringRepr.lowleveltype:
-            target = Char
-            malloc = mallocstr
+            return ll_charlist_slice_to_str(chars, 0, length)
         else:
             target = UniChar
             malloc = mallocunicode
