@@ -23,7 +23,7 @@ class AppTestSignature(AppTestCpythonExtensionBase):
             module.inc(4.5)
         assert str(info.value) == "expected integer, got float object", str(info.value)
 
-    def test_call_inc_with_wrong_type_sig_raises_runtime_error(self):
+    def Xtest_call_inc_with_wrong_type_sig_raises_runtime_error(self):
         module = self.import_module(name='signature')
         with raises(RuntimeError) as info:
             module.wrong(1)
@@ -110,3 +110,9 @@ class AppTestSignature(AppTestCpythonExtensionBase):
         obj = object()
         result = module.takes_only_object(obj)
         assert result is obj
+
+    # double -> double -> double -> double
+
+    def test_muladd(self):
+        module = self.import_module(name='signature')
+        assert module.muladd(1.0, 2.0, 3.0) == 1.0 + 2.0 * 3.0

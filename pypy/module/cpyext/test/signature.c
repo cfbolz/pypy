@@ -172,6 +172,42 @@ PyPyTypedMethodMetadata takes_only_object_sig = {
   .ml_name = "takes_only_object",
 };
 
+double muladd_impl(double a, double b, double c) {
+  return a + b * c;
+}
+
+PyObject* muladd(PyObject* module, PyObject*const *args, Py_ssize_t nargs) {
+  (void)module;
+  if (nargs != 3) {
+    return PyErr_Format(PyExc_TypeError, "muladd expected 3 arguments but got %ld", nargs);
+  }
+  if (!PyFloat_CheckExact(args[0])) {
+    return PyErr_Format(PyExc_TypeError, "muladd expected float but got %s", Py_TYPE(args[0])->tp_name);
+  }
+  double a = PyFloat_AsDouble(args[0]);
+  if (PyErr_Occurred()) return NULL;
+  if (!PyFloat_CheckExact(args[1])) {
+    return PyErr_Format(PyExc_TypeError, "muladd expected float but got %s", Py_TYPE(args[1])->tp_name);
+  }
+  double b = PyFloat_AsDouble(args[1]);
+  if (!PyFloat_CheckExact(args[2])) {
+    return PyErr_Format(PyExc_TypeError, "add expected float but got %s", Py_TYPE(args[2])->tp_name);
+  }
+  double c = PyFloat_AsDouble(args[2]);
+  if (PyErr_Occurred()) return NULL;
+  return PyFloat_FromDouble(muladd_impl(a, b, c));
+}
+
+int muladd_types[] = {T_C_DOUBLE, T_C_DOUBLE, T_C_DOUBLE, -1};
+
+PyPyTypedMethodMetadata muladd_sig = {
+  .arg_types = muladd_types,
+  .ret_type = T_C_DOUBLE,
+  .underlying_func = muladd_impl,
+  .ml_name = "muladd",
+};
+
+
 static PyMethodDef signature_methods[] = {
     {inc_sig.ml_name, inc, METH_O | METH_TYPED, "Add one to an int"},
     {wrong_sig.ml_name, inc, METH_O | METH_TYPED, "Have a silly signature"},
@@ -180,6 +216,7 @@ static PyMethodDef signature_methods[] = {
     {raise_double_sig.ml_name, raise_double, METH_O | METH_TYPED, "Raise an exception (double)"},
     {takes_object_sig.ml_name, (PyCFunction)(void*)takes_object, METH_FASTCALL | METH_TYPED, "Inc but also takes a PyObject*"},
     {takes_only_object_sig.ml_name, takes_only_object, METH_O | METH_TYPED, "id(x)"},
+    {muladd_sig.ml_name, (void*)muladd, METH_FASTCALL | METH_TYPED, "a + b * c"},
     {NULL, NULL, 0, NULL}};
 
 static struct PyModuleDef signature_definition = {
