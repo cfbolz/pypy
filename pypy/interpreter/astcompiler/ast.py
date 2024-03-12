@@ -173,6 +173,7 @@ def get(space):
 class mod(AST):
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.is_w(w_node, space.w_None):
             return None
         if space.isinstance_w(w_node, get(space).w_Module):
@@ -185,6 +186,7 @@ class mod(AST):
             return FunctionType.from_object(space, w_node)
         raise oefmt(space.w_TypeError,
                 "expected some sort of mod, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_mod'
 State.ast_type('mod', 'AST', None, [], default_none_fields=[], doc='mod = Module(stmt* body, type_ignore* type_ignores)\n    | Interactive(stmt* body)\n    | Expression(expr body)\n    | FunctionType(expr* argtypes, expr returns)')
 
 class Module(mod):
@@ -227,6 +229,7 @@ class Module(mod):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_body = get_field(space, w_node, 'body', False)
         w_type_ignores = get_field(space, w_node, 'type_ignores', False)
         body_w = space.unpackiterable(w_body)
@@ -234,6 +237,7 @@ class Module(mod):
         type_ignores_w = space.unpackiterable(w_type_ignores)
         _type_ignores = [type_ignore.from_object(space, w_item) for w_item in type_ignores_w]
         return Module(_body, _type_ignores)
+    from_object.__func__.func_name = 'from_object_Module'
 
 State.ast_type('Module', 'mod', ['body', 'type_ignores'], default_none_fields=[], doc='Module(stmt* body, type_ignore* type_ignores)')
 
@@ -266,10 +270,12 @@ class Interactive(mod):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_body = get_field(space, w_node, 'body', False)
         body_w = space.unpackiterable(w_body)
         _body = [stmt.from_object(space, w_item) for w_item in body_w]
         return Interactive(_body)
+    from_object.__func__.func_name = 'from_object_Interactive'
 
 State.ast_type('Interactive', 'mod', ['body'], default_none_fields=[], doc='Interactive(stmt* body)')
 
@@ -295,11 +301,13 @@ class Expression(mod):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_body = get_field(space, w_node, 'body', False)
         _body = expr.from_object(space, w_body)
         if _body is None:
             raise_required_value(space, w_node, 'body')
         return Expression(_body)
+    from_object.__func__.func_name = 'from_object_Expression'
 
 State.ast_type('Expression', 'mod', ['body'], default_none_fields=[], doc='Expression(expr body)')
 
@@ -337,6 +345,7 @@ class FunctionType(mod):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_argtypes = get_field(space, w_node, 'argtypes', False)
         w_returns = get_field(space, w_node, 'returns', False)
         argtypes_w = space.unpackiterable(w_argtypes)
@@ -345,6 +354,7 @@ class FunctionType(mod):
         if _returns is None:
             raise_required_value(space, w_node, 'returns')
         return FunctionType(_argtypes, _returns)
+    from_object.__func__.func_name = 'from_object_FunctionType'
 
 State.ast_type('FunctionType', 'mod', ['argtypes', 'returns'], default_none_fields=[], doc='FunctionType(expr* argtypes, expr returns)')
 
@@ -359,6 +369,7 @@ class stmt(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.is_w(w_node, space.w_None):
             return None
         if space.isinstance_w(w_node, get(space).w_FunctionDef):
@@ -415,6 +426,7 @@ class stmt(AST):
             return Continue.from_object(space, w_node)
         raise oefmt(space.w_TypeError,
                 "expected some sort of stmt, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_stmt'
 State.ast_type('stmt', 'AST', None, ['lineno', 'col_offset', 'end_lineno', 'end_col_offset'], default_none_fields=['end_lineno', 'end_col_offset'], doc='stmt = FunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment)\n     | AsyncFunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment)\n     | ClassDef(identifier name, expr* bases, keyword* keywords, stmt* body, expr* decorator_list)\n     | Return(expr? value)\n     | Delete(expr* targets)\n     | Assign(expr* targets, expr value, string? type_comment)\n     | AugAssign(expr target, operator op, expr value)\n     | AnnAssign(expr target, expr annotation, expr? value, int simple)\n     | For(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)\n     | AsyncFor(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)\n     | While(expr test, stmt* body, stmt* orelse)\n     | If(expr test, stmt* body, stmt* orelse)\n     | With(withitem* items, stmt* body, string? type_comment)\n     | AsyncWith(withitem* items, stmt* body, string? type_comment)\n     | Match(expr subject, match_case* cases)\n     | Raise(expr? exc, expr? cause)\n     | Try(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)\n     | Assert(expr test, expr? msg)\n     | Import(alias* names)\n     | ImportFrom(identifier? module, alias* names, int? level)\n     | Global(identifier* names)\n     | Nonlocal(identifier* names)\n     | Expr(expr value)\n     | Pass\n     | Break\n     | Continue')
 
 class FunctionDef(stmt):
@@ -490,6 +502,7 @@ class FunctionDef(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_name = get_field(space, w_node, 'name', False)
         w_args = get_field(space, w_node, 'args', False)
         w_body = get_field(space, w_node, 'body', False)
@@ -517,6 +530,7 @@ class FunctionDef(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return FunctionDef(_name, _args, _body, _decorator_list, _returns, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_FunctionDef'
 
 State.ast_type('FunctionDef', 'stmt', ['name', 'args', 'body', 'decorator_list', 'returns', 'type_comment'], default_none_fields=['returns', 'type_comment'], doc='FunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment)')
 
@@ -594,6 +608,7 @@ class AsyncFunctionDef(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_name = get_field(space, w_node, 'name', False)
         w_args = get_field(space, w_node, 'args', False)
         w_body = get_field(space, w_node, 'body', False)
@@ -621,6 +636,7 @@ class AsyncFunctionDef(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return AsyncFunctionDef(_name, _args, _body, _decorator_list, _returns, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_AsyncFunctionDef'
 
 State.ast_type('AsyncFunctionDef', 'stmt', ['name', 'args', 'body', 'decorator_list', 'returns', 'type_comment'], default_none_fields=['returns', 'type_comment'], doc='AsyncFunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment)')
 
@@ -706,6 +722,7 @@ class ClassDef(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_name = get_field(space, w_node, 'name', False)
         w_bases = get_field(space, w_node, 'bases', False)
         w_keywords = get_field(space, w_node, 'keywords', False)
@@ -731,6 +748,7 @@ class ClassDef(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return ClassDef(_name, _bases, _keywords, _body, _decorator_list, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_ClassDef'
 
 State.ast_type('ClassDef', 'stmt', ['name', 'bases', 'keywords', 'body', 'decorator_list'], default_none_fields=[], doc='ClassDef(identifier name, expr* bases, keyword* keywords, stmt* body, expr* decorator_list)')
 
@@ -770,6 +788,7 @@ class Return(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -781,6 +800,7 @@ class Return(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Return(_value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Return'
 
 State.ast_type('Return', 'stmt', ['value'], default_none_fields=['value'], doc='Return(expr? value)')
 
@@ -826,6 +846,7 @@ class Delete(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_targets = get_field(space, w_node, 'targets', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -838,6 +859,7 @@ class Delete(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Delete(_targets, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Delete'
 
 State.ast_type('Delete', 'stmt', ['targets'], default_none_fields=[], doc='Delete(expr* targets)')
 
@@ -893,6 +915,7 @@ class Assign(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_targets = get_field(space, w_node, 'targets', False)
         w_value = get_field(space, w_node, 'value', False)
         w_type_comment = get_field(space, w_node, 'type_comment', True)
@@ -911,6 +934,7 @@ class Assign(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Assign(_targets, _value, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Assign'
 
 State.ast_type('Assign', 'stmt', ['targets', 'value', 'type_comment'], default_none_fields=['type_comment'], doc='Assign(expr* targets, expr value, string? type_comment)')
 
@@ -958,6 +982,7 @@ class AugAssign(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_target = get_field(space, w_node, 'target', False)
         w_op = get_field(space, w_node, 'op', False)
         w_value = get_field(space, w_node, 'value', False)
@@ -979,6 +1004,7 @@ class AugAssign(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return AugAssign(_target, _op, _value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_AugAssign'
 
 State.ast_type('AugAssign', 'stmt', ['target', 'op', 'value'], default_none_fields=[], doc='AugAssign(expr target, operator op, expr value)')
 
@@ -1032,6 +1058,7 @@ class AnnAssign(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_target = get_field(space, w_node, 'target', False)
         w_annotation = get_field(space, w_node, 'annotation', False)
         w_value = get_field(space, w_node, 'value', True)
@@ -1053,6 +1080,7 @@ class AnnAssign(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return AnnAssign(_target, _annotation, _value, _simple, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_AnnAssign'
 
 State.ast_type('AnnAssign', 'stmt', ['target', 'annotation', 'value', 'simple'], default_none_fields=['value'], doc='AnnAssign(expr target, expr annotation, expr? value, int simple)')
 
@@ -1125,6 +1153,7 @@ class For(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_target = get_field(space, w_node, 'target', False)
         w_iter = get_field(space, w_node, 'iter', False)
         w_body = get_field(space, w_node, 'body', False)
@@ -1150,6 +1179,7 @@ class For(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return For(_target, _iter, _body, _orelse, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_For'
 
 State.ast_type('For', 'stmt', ['target', 'iter', 'body', 'orelse', 'type_comment'], default_none_fields=['type_comment'], doc='For(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)')
 
@@ -1222,6 +1252,7 @@ class AsyncFor(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_target = get_field(space, w_node, 'target', False)
         w_iter = get_field(space, w_node, 'iter', False)
         w_body = get_field(space, w_node, 'body', False)
@@ -1247,6 +1278,7 @@ class AsyncFor(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return AsyncFor(_target, _iter, _body, _orelse, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_AsyncFor'
 
 State.ast_type('AsyncFor', 'stmt', ['target', 'iter', 'body', 'orelse', 'type_comment'], default_none_fields=['type_comment'], doc='AsyncFor(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)')
 
@@ -1309,6 +1341,7 @@ class While(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_test = get_field(space, w_node, 'test', False)
         w_body = get_field(space, w_node, 'body', False)
         w_orelse = get_field(space, w_node, 'orelse', False)
@@ -1328,6 +1361,7 @@ class While(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return While(_test, _body, _orelse, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_While'
 
 State.ast_type('While', 'stmt', ['test', 'body', 'orelse'], default_none_fields=[], doc='While(expr test, stmt* body, stmt* orelse)')
 
@@ -1390,6 +1424,7 @@ class If(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_test = get_field(space, w_node, 'test', False)
         w_body = get_field(space, w_node, 'body', False)
         w_orelse = get_field(space, w_node, 'orelse', False)
@@ -1409,6 +1444,7 @@ class If(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return If(_test, _body, _orelse, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_If'
 
 State.ast_type('If', 'stmt', ['test', 'body', 'orelse'], default_none_fields=[], doc='If(expr test, stmt* body, stmt* orelse)')
 
@@ -1471,6 +1507,7 @@ class With(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_items = get_field(space, w_node, 'items', False)
         w_body = get_field(space, w_node, 'body', False)
         w_type_comment = get_field(space, w_node, 'type_comment', True)
@@ -1488,6 +1525,7 @@ class With(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return With(_items, _body, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_With'
 
 State.ast_type('With', 'stmt', ['items', 'body', 'type_comment'], default_none_fields=['type_comment'], doc='With(withitem* items, stmt* body, string? type_comment)')
 
@@ -1550,6 +1588,7 @@ class AsyncWith(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_items = get_field(space, w_node, 'items', False)
         w_body = get_field(space, w_node, 'body', False)
         w_type_comment = get_field(space, w_node, 'type_comment', True)
@@ -1567,6 +1606,7 @@ class AsyncWith(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return AsyncWith(_items, _body, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_AsyncWith'
 
 State.ast_type('AsyncWith', 'stmt', ['items', 'body', 'type_comment'], default_none_fields=['type_comment'], doc='AsyncWith(withitem* items, stmt* body, string? type_comment)')
 
@@ -1617,6 +1657,7 @@ class Match(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_subject = get_field(space, w_node, 'subject', False)
         w_cases = get_field(space, w_node, 'cases', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -1633,6 +1674,7 @@ class Match(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Match(_subject, _cases, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Match'
 
 State.ast_type('Match', 'stmt', ['subject', 'cases'], default_none_fields=[], doc='Match(expr subject, match_case* cases)')
 
@@ -1678,6 +1720,7 @@ class Raise(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_exc = get_field(space, w_node, 'exc', True)
         w_cause = get_field(space, w_node, 'cause', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -1691,6 +1734,7 @@ class Raise(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Raise(_exc, _cause, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Raise'
 
 State.ast_type('Raise', 'stmt', ['exc', 'cause'], default_none_fields=['exc', 'cause'], doc='Raise(expr? exc, expr? cause)')
 
@@ -1772,6 +1816,7 @@ class Try(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_body = get_field(space, w_node, 'body', False)
         w_handlers = get_field(space, w_node, 'handlers', False)
         w_orelse = get_field(space, w_node, 'orelse', False)
@@ -1793,6 +1838,7 @@ class Try(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Try(_body, _handlers, _orelse, _finalbody, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Try'
 
 State.ast_type('Try', 'stmt', ['body', 'handlers', 'orelse', 'finalbody'], default_none_fields=[], doc='Try(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)')
 
@@ -1837,6 +1883,7 @@ class Assert(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_test = get_field(space, w_node, 'test', False)
         w_msg = get_field(space, w_node, 'msg', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -1852,6 +1899,7 @@ class Assert(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Assert(_test, _msg, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Assert'
 
 State.ast_type('Assert', 'stmt', ['test', 'msg'], default_none_fields=['msg'], doc='Assert(expr test, expr? msg)')
 
@@ -1897,6 +1945,7 @@ class Import(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_names = get_field(space, w_node, 'names', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -1909,6 +1958,7 @@ class Import(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Import(_names, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Import'
 
 State.ast_type('Import', 'stmt', ['names'], default_none_fields=[], doc='Import(alias* names)')
 
@@ -1962,6 +2012,7 @@ class ImportFrom(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_module = get_field(space, w_node, 'module', True)
         w_names = get_field(space, w_node, 'names', False)
         w_level = get_field(space, w_node, 'level', True)
@@ -1978,6 +2029,7 @@ class ImportFrom(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return ImportFrom(_module, _names, _level, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_ImportFrom'
 
 State.ast_type('ImportFrom', 'stmt', ['module', 'names', 'level'], default_none_fields=['module', 'level'], doc='ImportFrom(identifier? module, alias* names, int? level)')
 
@@ -2019,6 +2071,7 @@ class Global(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_names = get_field(space, w_node, 'names', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -2031,6 +2084,7 @@ class Global(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Global(_names, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Global'
 
 State.ast_type('Global', 'stmt', ['names'], default_none_fields=[], doc='Global(identifier* names)')
 
@@ -2072,6 +2126,7 @@ class Nonlocal(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_names = get_field(space, w_node, 'names', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -2084,6 +2139,7 @@ class Nonlocal(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Nonlocal(_names, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Nonlocal'
 
 State.ast_type('Nonlocal', 'stmt', ['names'], default_none_fields=[], doc='Nonlocal(identifier* names)')
 
@@ -2122,6 +2178,7 @@ class Expr(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -2135,6 +2192,7 @@ class Expr(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Expr(_value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Expr'
 
 State.ast_type('Expr', 'stmt', ['value'], default_none_fields=[], doc='Expr(expr value)')
 
@@ -2168,6 +2226,7 @@ class Pass(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
         w_end_lineno = get_field(space, w_node, 'end_lineno', True)
@@ -2177,6 +2236,7 @@ class Pass(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Pass(_lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Pass'
 
 State.ast_type('Pass', 'stmt', [], default_none_fields=[], doc='Pass')
 
@@ -2210,6 +2270,7 @@ class Break(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
         w_end_lineno = get_field(space, w_node, 'end_lineno', True)
@@ -2219,6 +2280,7 @@ class Break(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Break(_lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Break'
 
 State.ast_type('Break', 'stmt', [], default_none_fields=[], doc='Break')
 
@@ -2252,6 +2314,7 @@ class Continue(stmt):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
         w_end_lineno = get_field(space, w_node, 'end_lineno', True)
@@ -2261,6 +2324,7 @@ class Continue(stmt):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Continue(_lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Continue'
 
 State.ast_type('Continue', 'stmt', [], default_none_fields=[], doc='Continue')
 
@@ -2275,6 +2339,7 @@ class expr(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.is_w(w_node, space.w_None):
             return None
         if space.isinstance_w(w_node, get(space).w_BoolOp):
@@ -2335,6 +2400,7 @@ class expr(AST):
             return Slice.from_object(space, w_node)
         raise oefmt(space.w_TypeError,
                 "expected some sort of expr, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_expr'
 State.ast_type('expr', 'AST', None, ['lineno', 'col_offset', 'end_lineno', 'end_col_offset'], default_none_fields=['end_lineno', 'end_col_offset'], doc='expr = BoolOp(boolop op, expr* values)\n     | NamedExpr(expr target, expr value)\n     | BinOp(expr left, operator op, expr right)\n     | UnaryOp(unaryop op, expr operand)\n     | Lambda(arguments args, expr body)\n     | IfExp(expr test, expr body, expr orelse)\n     | Dict(expr* keys, expr* values)\n     | Set(expr* elts)\n     | ListComp(expr elt, comprehension* generators)\n     | SetComp(expr elt, comprehension* generators)\n     | DictComp(expr key, expr value, comprehension* generators)\n     | GeneratorExp(expr elt, comprehension* generators)\n     | Await(expr value)\n     | Yield(expr? value)\n     | YieldFrom(expr value)\n     | Compare(expr left, cmpop* ops, expr* comparators)\n     | Call(expr func, expr* args, keyword* keywords)\n     | RevDBMetaVar(int metavar)\n     | FormattedValue(expr value, int? conversion, expr? format_spec)\n     | JoinedStr(expr* values)\n     | Constant(constant value, string? kind)\n     | Attribute(expr value, identifier attr, expr_context ctx)\n     | Subscript(expr value, expr slice, expr_context ctx)\n     | Starred(expr value, expr_context ctx)\n     | Name(identifier id, expr_context ctx)\n     | List(expr* elts, expr_context ctx)\n     | Tuple(expr* elts, expr_context ctx)\n     | Slice(expr? lower, expr? upper, expr? step)')
 
 class BoolOp(expr):
@@ -2382,6 +2448,7 @@ class BoolOp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_op = get_field(space, w_node, 'op', False)
         w_values = get_field(space, w_node, 'values', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -2398,6 +2465,7 @@ class BoolOp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return BoolOp(_op, _values, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_BoolOp'
 
 State.ast_type('BoolOp', 'expr', ['op', 'values'], default_none_fields=[], doc='BoolOp(boolop op, expr* values)')
 
@@ -2441,6 +2509,7 @@ class NamedExpr(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_target = get_field(space, w_node, 'target', False)
         w_value = get_field(space, w_node, 'value', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -2458,6 +2527,7 @@ class NamedExpr(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return NamedExpr(_target, _value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_NamedExpr'
 
 State.ast_type('NamedExpr', 'expr', ['target', 'value'], default_none_fields=[], doc='NamedExpr(expr target, expr value)')
 
@@ -2505,6 +2575,7 @@ class BinOp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_left = get_field(space, w_node, 'left', False)
         w_op = get_field(space, w_node, 'op', False)
         w_right = get_field(space, w_node, 'right', False)
@@ -2526,6 +2597,7 @@ class BinOp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return BinOp(_left, _op, _right, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_BinOp'
 
 State.ast_type('BinOp', 'expr', ['left', 'op', 'right'], default_none_fields=[], doc='BinOp(expr left, operator op, expr right)')
 
@@ -2568,6 +2640,7 @@ class UnaryOp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_op = get_field(space, w_node, 'op', False)
         w_operand = get_field(space, w_node, 'operand', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -2585,6 +2658,7 @@ class UnaryOp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return UnaryOp(_op, _operand, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_UnaryOp'
 
 State.ast_type('UnaryOp', 'expr', ['op', 'operand'], default_none_fields=[], doc='UnaryOp(unaryop op, expr operand)')
 
@@ -2628,6 +2702,7 @@ class Lambda(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_args = get_field(space, w_node, 'args', False)
         w_body = get_field(space, w_node, 'body', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -2645,6 +2720,7 @@ class Lambda(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Lambda(_args, _body, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Lambda'
 
 State.ast_type('Lambda', 'expr', ['args', 'body'], default_none_fields=[], doc='Lambda(arguments args, expr body)')
 
@@ -2693,6 +2769,7 @@ class IfExp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_test = get_field(space, w_node, 'test', False)
         w_body = get_field(space, w_node, 'body', False)
         w_orelse = get_field(space, w_node, 'orelse', False)
@@ -2714,6 +2791,7 @@ class IfExp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return IfExp(_test, _body, _orelse, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_IfExp'
 
 State.ast_type('IfExp', 'expr', ['test', 'body', 'orelse'], default_none_fields=[], doc='IfExp(expr test, expr body, expr orelse)')
 
@@ -2771,6 +2849,7 @@ class Dict(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_keys = get_field(space, w_node, 'keys', False)
         w_values = get_field(space, w_node, 'values', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -2786,6 +2865,7 @@ class Dict(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Dict(_keys, _values, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Dict'
 
 State.ast_type('Dict', 'expr', ['keys', 'values'], default_none_fields=[], doc='Dict(expr* keys, expr* values)')
 
@@ -2831,6 +2911,7 @@ class Set(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_elts = get_field(space, w_node, 'elts', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -2843,6 +2924,7 @@ class Set(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Set(_elts, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Set'
 
 State.ast_type('Set', 'expr', ['elts'], default_none_fields=[], doc='Set(expr* elts)')
 
@@ -2893,6 +2975,7 @@ class ListComp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_elt = get_field(space, w_node, 'elt', False)
         w_generators = get_field(space, w_node, 'generators', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -2909,6 +2992,7 @@ class ListComp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return ListComp(_elt, _generators, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_ListComp'
 
 State.ast_type('ListComp', 'expr', ['elt', 'generators'], default_none_fields=[], doc='ListComp(expr elt, comprehension* generators)')
 
@@ -2959,6 +3043,7 @@ class SetComp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_elt = get_field(space, w_node, 'elt', False)
         w_generators = get_field(space, w_node, 'generators', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -2975,6 +3060,7 @@ class SetComp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return SetComp(_elt, _generators, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_SetComp'
 
 State.ast_type('SetComp', 'expr', ['elt', 'generators'], default_none_fields=[], doc='SetComp(expr elt, comprehension* generators)')
 
@@ -3030,6 +3116,7 @@ class DictComp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_key = get_field(space, w_node, 'key', False)
         w_value = get_field(space, w_node, 'value', False)
         w_generators = get_field(space, w_node, 'generators', False)
@@ -3050,6 +3137,7 @@ class DictComp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return DictComp(_key, _value, _generators, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_DictComp'
 
 State.ast_type('DictComp', 'expr', ['key', 'value', 'generators'], default_none_fields=[], doc='DictComp(expr key, expr value, comprehension* generators)')
 
@@ -3100,6 +3188,7 @@ class GeneratorExp(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_elt = get_field(space, w_node, 'elt', False)
         w_generators = get_field(space, w_node, 'generators', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -3116,6 +3205,7 @@ class GeneratorExp(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return GeneratorExp(_elt, _generators, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_GeneratorExp'
 
 State.ast_type('GeneratorExp', 'expr', ['elt', 'generators'], default_none_fields=[], doc='GeneratorExp(expr elt, comprehension* generators)')
 
@@ -3154,6 +3244,7 @@ class Await(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -3167,6 +3258,7 @@ class Await(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Await(_value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Await'
 
 State.ast_type('Await', 'expr', ['value'], default_none_fields=[], doc='Await(expr value)')
 
@@ -3206,6 +3298,7 @@ class Yield(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -3217,6 +3310,7 @@ class Yield(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Yield(_value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Yield'
 
 State.ast_type('Yield', 'expr', ['value'], default_none_fields=['value'], doc='Yield(expr? value)')
 
@@ -3255,6 +3349,7 @@ class YieldFrom(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -3268,6 +3363,7 @@ class YieldFrom(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return YieldFrom(_value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_YieldFrom'
 
 State.ast_type('YieldFrom', 'expr', ['value'], default_none_fields=[], doc='YieldFrom(expr value)')
 
@@ -3326,6 +3422,7 @@ class Compare(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_left = get_field(space, w_node, 'left', False)
         w_ops = get_field(space, w_node, 'ops', False)
         w_comparators = get_field(space, w_node, 'comparators', False)
@@ -3345,6 +3442,7 @@ class Compare(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Compare(_left, _ops, _comparators, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Compare'
 
 State.ast_type('Compare', 'expr', ['left', 'ops', 'comparators'], default_none_fields=[], doc='Compare(expr left, cmpop* ops, expr* comparators)')
 
@@ -3407,6 +3505,7 @@ class Call(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_func = get_field(space, w_node, 'func', False)
         w_args = get_field(space, w_node, 'args', False)
         w_keywords = get_field(space, w_node, 'keywords', False)
@@ -3426,6 +3525,7 @@ class Call(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Call(_func, _args, _keywords, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Call'
 
 State.ast_type('Call', 'expr', ['func', 'args', 'keywords'], default_none_fields=[], doc='Call(expr func, expr* args, keyword* keywords)')
 
@@ -3463,6 +3563,7 @@ class RevDBMetaVar(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_metavar = get_field(space, w_node, 'metavar', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -3474,6 +3575,7 @@ class RevDBMetaVar(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return RevDBMetaVar(_metavar, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_RevDBMetaVar'
 
 State.ast_type('RevDBMetaVar', 'expr', ['metavar'], default_none_fields=[], doc='RevDBMetaVar(int metavar)')
 
@@ -3522,6 +3624,7 @@ class FormattedValue(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_conversion = get_field(space, w_node, 'conversion', True)
         w_format_spec = get_field(space, w_node, 'format_spec', True)
@@ -3539,6 +3642,7 @@ class FormattedValue(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return FormattedValue(_value, _conversion, _format_spec, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_FormattedValue'
 
 State.ast_type('FormattedValue', 'expr', ['value', 'conversion', 'format_spec'], default_none_fields=['conversion', 'format_spec'], doc='FormattedValue(expr value, int? conversion, expr? format_spec)')
 
@@ -3584,6 +3688,7 @@ class JoinedStr(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_values = get_field(space, w_node, 'values', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -3596,6 +3701,7 @@ class JoinedStr(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return JoinedStr(_values, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_JoinedStr'
 
 State.ast_type('JoinedStr', 'expr', ['values'], default_none_fields=[], doc='JoinedStr(expr* values)')
 
@@ -3638,6 +3744,7 @@ class Constant(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_kind = get_field(space, w_node, 'kind', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -3653,6 +3760,7 @@ class Constant(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Constant(_value, _kind, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Constant'
 
 State.ast_type('Constant', 'expr', ['value', 'kind'], default_none_fields=['kind'], doc='Constant(constant value, string? kind)')
 
@@ -3699,6 +3807,7 @@ class Attribute(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_attr = get_field(space, w_node, 'attr', False)
         w_ctx = get_field(space, w_node, 'ctx', False)
@@ -3720,6 +3829,7 @@ class Attribute(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Attribute(_value, _attr, _ctx, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Attribute'
 
 State.ast_type('Attribute', 'expr', ['value', 'attr', 'ctx'], default_none_fields=[], doc='Attribute(expr value, identifier attr, expr_context ctx)')
 
@@ -3767,6 +3877,7 @@ class Subscript(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_slice = get_field(space, w_node, 'slice', False)
         w_ctx = get_field(space, w_node, 'ctx', False)
@@ -3788,6 +3899,7 @@ class Subscript(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Subscript(_value, _slice, _ctx, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Subscript'
 
 State.ast_type('Subscript', 'expr', ['value', 'slice', 'ctx'], default_none_fields=[], doc='Subscript(expr value, expr slice, expr_context ctx)')
 
@@ -3830,6 +3942,7 @@ class Starred(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_ctx = get_field(space, w_node, 'ctx', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -3847,6 +3960,7 @@ class Starred(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Starred(_value, _ctx, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Starred'
 
 State.ast_type('Starred', 'expr', ['value', 'ctx'], default_none_fields=[], doc='Starred(expr value, expr_context ctx)')
 
@@ -3888,6 +4002,7 @@ class Name(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_id = get_field(space, w_node, 'id', False)
         w_ctx = get_field(space, w_node, 'ctx', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -3905,6 +4020,7 @@ class Name(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Name(_id, _ctx, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Name'
 
 State.ast_type('Name', 'expr', ['id', 'ctx'], default_none_fields=[], doc='Name(identifier id, expr_context ctx)')
 
@@ -3954,6 +4070,7 @@ class List(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_elts = get_field(space, w_node, 'elts', False)
         w_ctx = get_field(space, w_node, 'ctx', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -3970,6 +4087,7 @@ class List(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return List(_elts, _ctx, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_List'
 
 State.ast_type('List', 'expr', ['elts', 'ctx'], default_none_fields=[], doc='List(expr* elts, expr_context ctx)')
 
@@ -4019,6 +4137,7 @@ class Tuple(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_elts = get_field(space, w_node, 'elts', False)
         w_ctx = get_field(space, w_node, 'ctx', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -4035,6 +4154,7 @@ class Tuple(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Tuple(_elts, _ctx, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Tuple'
 
 State.ast_type('Tuple', 'expr', ['elts', 'ctx'], default_none_fields=[], doc='Tuple(expr* elts, expr_context ctx)')
 
@@ -4086,6 +4206,7 @@ class Slice(expr):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_lower = get_field(space, w_node, 'lower', True)
         w_upper = get_field(space, w_node, 'upper', True)
         w_step = get_field(space, w_node, 'step', True)
@@ -4101,6 +4222,7 @@ class Slice(expr):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return Slice(_lower, _upper, _step, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_Slice'
 
 State.ast_type('Slice', 'expr', ['lower', 'upper', 'step'], default_none_fields=['lower', 'upper', 'step'], doc='Slice(expr? lower, expr? upper, expr? step)')
 
@@ -4108,6 +4230,7 @@ State.ast_type('Slice', 'expr', ['lower', 'upper', 'step'], default_none_fields=
 class expr_context(AST):
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.isinstance_w(w_node, get(space).w_Load):
             return 1
         if space.isinstance_w(w_node, get(space).w_Store):
@@ -4116,6 +4239,7 @@ class expr_context(AST):
             return 3
         raise oefmt(space.w_TypeError,
                 "expected some sort of expr_context, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_expr_context'
 State.ast_type('expr_context', 'AST', None, doc='expr_context = Load | Store | Del')
 
 class _Load(expr_context):
@@ -4146,12 +4270,14 @@ expr_context_to_class = [
 class boolop(AST):
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.isinstance_w(w_node, get(space).w_And):
             return 1
         if space.isinstance_w(w_node, get(space).w_Or):
             return 2
         raise oefmt(space.w_TypeError,
                 "expected some sort of boolop, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_boolop'
 State.ast_type('boolop', 'AST', None, doc='boolop = And | Or')
 
 class _And(boolop):
@@ -4175,6 +4301,7 @@ boolop_to_class = [
 class operator(AST):
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.isinstance_w(w_node, get(space).w_Add):
             return 1
         if space.isinstance_w(w_node, get(space).w_Sub):
@@ -4203,6 +4330,7 @@ class operator(AST):
             return 13
         raise oefmt(space.w_TypeError,
                 "expected some sort of operator, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_operator'
 State.ast_type('operator', 'AST', None, doc='operator = Add | Sub | Mult | MatMult | Div | Mod | Pow | LShift | RShift | BitOr | BitXor | BitAnd | FloorDiv')
 
 class _Add(operator):
@@ -4303,6 +4431,7 @@ operator_to_class = [
 class unaryop(AST):
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.isinstance_w(w_node, get(space).w_Invert):
             return 1
         if space.isinstance_w(w_node, get(space).w_Not):
@@ -4313,6 +4442,7 @@ class unaryop(AST):
             return 4
         raise oefmt(space.w_TypeError,
                 "expected some sort of unaryop, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_unaryop'
 State.ast_type('unaryop', 'AST', None, doc='unaryop = Invert | Not | UAdd | USub')
 
 class _Invert(unaryop):
@@ -4350,6 +4480,7 @@ unaryop_to_class = [
 class cmpop(AST):
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.isinstance_w(w_node, get(space).w_Eq):
             return 1
         if space.isinstance_w(w_node, get(space).w_NotEq):
@@ -4372,6 +4503,7 @@ class cmpop(AST):
             return 10
         raise oefmt(space.w_TypeError,
                 "expected some sort of cmpop, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_cmpop'
 State.ast_type('cmpop', 'AST', None, doc='cmpop = Eq | NotEq | Lt | LtE | Gt | GtE | Is | IsNot | In | NotIn')
 
 class _Eq(cmpop):
@@ -4490,6 +4622,7 @@ class comprehension(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_target = get_field(space, w_node, 'target', False)
         w_iter = get_field(space, w_node, 'iter', False)
         w_ifs = get_field(space, w_node, 'ifs', False)
@@ -4504,6 +4637,7 @@ class comprehension(AST):
         _ifs = [expr.from_object(space, w_item) for w_item in ifs_w]
         _is_async = obj_to_int(space, w_is_async, False)
         return comprehension(_target, _iter, _ifs, _is_async)
+    from_object.__func__.func_name = 'from_object_comprehension'
 
 State.ast_type('comprehension', 'AST', ['target', 'iter', 'ifs', 'is_async'], default_none_fields=[], doc='comprehension(expr target, expr iter, expr* ifs, int is_async)')
 
@@ -4517,12 +4651,14 @@ class excepthandler(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.is_w(w_node, space.w_None):
             return None
         if space.isinstance_w(w_node, get(space).w_ExceptHandler):
             return ExceptHandler.from_object(space, w_node)
         raise oefmt(space.w_TypeError,
                 "expected some sort of excepthandler, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_excepthandler'
 State.ast_type('excepthandler', 'AST', None, ['lineno', 'col_offset', 'end_lineno', 'end_col_offset'], default_none_fields=['end_lineno', 'end_col_offset'], doc='excepthandler = ExceptHandler(expr? type, identifier? name, stmt* body)')
 
 class ExceptHandler(excepthandler):
@@ -4576,6 +4712,7 @@ class ExceptHandler(excepthandler):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_type = get_field(space, w_node, 'type', True)
         w_name = get_field(space, w_node, 'name', True)
         w_body = get_field(space, w_node, 'body', False)
@@ -4592,6 +4729,7 @@ class ExceptHandler(excepthandler):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return ExceptHandler(_type, _name, _body, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_ExceptHandler'
 
 State.ast_type('ExceptHandler', 'excepthandler', ['type', 'name', 'body'], default_none_fields=['type', 'name'], doc='ExceptHandler(expr? type, identifier? name, stmt* body)')
 
@@ -4684,6 +4822,7 @@ class arguments(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_posonlyargs = get_field(space, w_node, 'posonlyargs', False)
         w_args = get_field(space, w_node, 'args', False)
         w_vararg = get_field(space, w_node, 'vararg', True)
@@ -4704,6 +4843,7 @@ class arguments(AST):
         defaults_w = space.unpackiterable(w_defaults)
         _defaults = [expr.from_object(space, w_item) for w_item in defaults_w]
         return arguments(_posonlyargs, _args, _vararg, _kwonlyargs, _kw_defaults, _kwarg, _defaults)
+    from_object.__func__.func_name = 'from_object_arguments'
 
 State.ast_type('arguments', 'AST', ['posonlyargs', 'args', 'vararg', 'kwonlyargs', 'kw_defaults', 'kwarg', 'defaults'], default_none_fields=['vararg', 'kwarg'], doc='arguments(arg* posonlyargs, arg* args, arg? vararg, arg* kwonlyargs, expr* kw_defaults, arg? kwarg, expr* defaults)')
 
@@ -4754,6 +4894,7 @@ class arg(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_arg = get_field(space, w_node, 'arg', False)
         w_annotation = get_field(space, w_node, 'annotation', True)
         w_type_comment = get_field(space, w_node, 'type_comment', True)
@@ -4771,6 +4912,7 @@ class arg(AST):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return arg(_arg, _annotation, _type_comment, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_arg'
 
 State.ast_type('arg', 'AST', ['arg', 'annotation', 'type_comment'], ['lineno', 'col_offset', 'end_lineno', 'end_col_offset'], default_none_fields=['annotation', 'type_comment', 'end_lineno', 'end_col_offset'], doc='arg(identifier arg, expr? annotation, string? type_comment)')
 
@@ -4815,6 +4957,7 @@ class keyword(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_arg = get_field(space, w_node, 'arg', True)
         w_value = get_field(space, w_node, 'value', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -4830,6 +4973,7 @@ class keyword(AST):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return keyword(_arg, _value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_keyword'
 
 State.ast_type('keyword', 'AST', ['arg', 'value'], ['lineno', 'col_offset', 'end_lineno', 'end_col_offset'], default_none_fields=['arg', 'end_lineno', 'end_col_offset'], doc='keyword(identifier? arg, expr value)')
 
@@ -4873,6 +5017,7 @@ class alias(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_name = get_field(space, w_node, 'name', False)
         w_asname = get_field(space, w_node, 'asname', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -4888,6 +5033,7 @@ class alias(AST):
         _end_lineno = obj_to_int(space, w_end_lineno, True)
         _end_col_offset = obj_to_int(space, w_end_col_offset, True)
         return alias(_name, _asname, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_alias'
 
 State.ast_type('alias', 'AST', ['name', 'asname'], ['lineno', 'col_offset', 'end_lineno', 'end_col_offset'], default_none_fields=['asname', 'end_lineno', 'end_col_offset'], doc='alias(identifier name, identifier? asname)')
 
@@ -4918,6 +5064,7 @@ class withitem(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_context_expr = get_field(space, w_node, 'context_expr', False)
         w_optional_vars = get_field(space, w_node, 'optional_vars', True)
         _context_expr = expr.from_object(space, w_context_expr)
@@ -4925,6 +5072,7 @@ class withitem(AST):
             raise_required_value(space, w_node, 'context_expr')
         _optional_vars = expr.from_object(space, w_optional_vars)
         return withitem(_context_expr, _optional_vars)
+    from_object.__func__.func_name = 'from_object_withitem'
 
 State.ast_type('withitem', 'AST', ['context_expr', 'optional_vars'], default_none_fields=['optional_vars'], doc='withitem(expr context_expr, expr? optional_vars)')
 
@@ -4967,6 +5115,7 @@ class match_case(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_pattern = get_field(space, w_node, 'pattern', False)
         w_guard = get_field(space, w_node, 'guard', True)
         w_body = get_field(space, w_node, 'body', False)
@@ -4977,6 +5126,7 @@ class match_case(AST):
         body_w = space.unpackiterable(w_body)
         _body = [stmt.from_object(space, w_item) for w_item in body_w]
         return match_case(_pattern, _guard, _body)
+    from_object.__func__.func_name = 'from_object_match_case'
 
 State.ast_type('match_case', 'AST', ['pattern', 'guard', 'body'], default_none_fields=['guard'], doc='match_case(pattern pattern, expr? guard, stmt* body)')
 
@@ -4990,6 +5140,7 @@ class pattern(AST):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.is_w(w_node, space.w_None):
             return None
         if space.isinstance_w(w_node, get(space).w_MatchValue):
@@ -5010,6 +5161,7 @@ class pattern(AST):
             return MatchOr.from_object(space, w_node)
         raise oefmt(space.w_TypeError,
                 "expected some sort of pattern, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_pattern'
 State.ast_type('pattern', 'AST', None, ['lineno', 'col_offset', 'end_lineno', 'end_col_offset'], default_none_fields=[], doc='pattern = MatchValue(expr value)\n        | MatchSingleton(constant value)\n        | MatchSequence(pattern* patterns)\n        | MatchMapping(expr* keys, pattern* patterns, identifier? rest)\n        | MatchClass(expr cls, pattern* patterns, identifier* kwd_attrs, pattern* kwd_patterns)\n        | MatchStar(identifier? name)\n        | MatchAs(pattern? pattern, identifier? name)\n        | MatchOr(pattern* patterns)')
 
 class MatchValue(pattern):
@@ -5046,6 +5198,7 @@ class MatchValue(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -5059,6 +5212,7 @@ class MatchValue(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchValue(_value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchValue'
 
 State.ast_type('MatchValue', 'pattern', ['value'], default_none_fields=[], doc='MatchValue(expr value)')
 
@@ -5096,6 +5250,7 @@ class MatchSingleton(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_value = get_field(space, w_node, 'value', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -5109,6 +5264,7 @@ class MatchSingleton(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchSingleton(_value, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchSingleton'
 
 State.ast_type('MatchSingleton', 'pattern', ['value'], default_none_fields=[], doc='MatchSingleton(constant value)')
 
@@ -5154,6 +5310,7 @@ class MatchSequence(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_patterns = get_field(space, w_node, 'patterns', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -5166,6 +5323,7 @@ class MatchSequence(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchSequence(_patterns, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchSequence'
 
 State.ast_type('MatchSequence', 'pattern', ['patterns'], default_none_fields=[], doc='MatchSequence(pattern* patterns)')
 
@@ -5227,6 +5385,7 @@ class MatchMapping(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_keys = get_field(space, w_node, 'keys', False)
         w_patterns = get_field(space, w_node, 'patterns', False)
         w_rest = get_field(space, w_node, 'rest', True)
@@ -5244,6 +5403,7 @@ class MatchMapping(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchMapping(_keys, _patterns, _rest, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchMapping'
 
 State.ast_type('MatchMapping', 'pattern', ['keys', 'patterns', 'rest'], default_none_fields=['rest'], doc='MatchMapping(expr* keys, pattern* patterns, identifier? rest)')
 
@@ -5314,6 +5474,7 @@ class MatchClass(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_cls = get_field(space, w_node, 'cls', False)
         w_patterns = get_field(space, w_node, 'patterns', False)
         w_kwd_attrs = get_field(space, w_node, 'kwd_attrs', False)
@@ -5336,6 +5497,7 @@ class MatchClass(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchClass(_cls, _patterns, _kwd_attrs, _kwd_patterns, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchClass'
 
 State.ast_type('MatchClass', 'pattern', ['cls', 'patterns', 'kwd_attrs', 'kwd_patterns'], default_none_fields=[], doc='MatchClass(expr cls, pattern* patterns, identifier* kwd_attrs, pattern* kwd_patterns)')
 
@@ -5373,6 +5535,7 @@ class MatchStar(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_name = get_field(space, w_node, 'name', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -5384,6 +5547,7 @@ class MatchStar(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchStar(_name, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchStar'
 
 State.ast_type('MatchStar', 'pattern', ['name'], default_none_fields=['name'], doc='MatchStar(identifier? name)')
 
@@ -5427,6 +5591,7 @@ class MatchAs(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_pattern = get_field(space, w_node, 'pattern', True)
         w_name = get_field(space, w_node, 'name', True)
         w_lineno = get_field(space, w_node, 'lineno', False)
@@ -5440,6 +5605,7 @@ class MatchAs(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchAs(_pattern, _name, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchAs'
 
 State.ast_type('MatchAs', 'pattern', ['pattern', 'name'], default_none_fields=['pattern', 'name'], doc='MatchAs(pattern? pattern, identifier? name)')
 
@@ -5485,6 +5651,7 @@ class MatchOr(pattern):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_patterns = get_field(space, w_node, 'patterns', False)
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_col_offset = get_field(space, w_node, 'col_offset', False)
@@ -5497,6 +5664,7 @@ class MatchOr(pattern):
         _end_lineno = obj_to_int(space, w_end_lineno, False)
         _end_col_offset = obj_to_int(space, w_end_col_offset, False)
         return MatchOr(_patterns, _lineno, _col_offset, _end_lineno, _end_col_offset)
+    from_object.__func__.func_name = 'from_object_MatchOr'
 
 State.ast_type('MatchOr', 'pattern', ['patterns'], default_none_fields=[], doc='MatchOr(pattern* patterns)')
 
@@ -5504,12 +5672,14 @@ State.ast_type('MatchOr', 'pattern', ['patterns'], default_none_fields=[], doc='
 class type_ignore(AST):
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         if space.is_w(w_node, space.w_None):
             return None
         if space.isinstance_w(w_node, get(space).w_TypeIgnore):
             return TypeIgnore.from_object(space, w_node)
         raise oefmt(space.w_TypeError,
                 "expected some sort of type_ignore, but got %R", w_node)
+    from_object.__func__.func_name = 'from_object_type_ignore'
 State.ast_type('type_ignore', 'AST', None, [], default_none_fields=[], doc='type_ignore = TypeIgnore(int lineno, string tag)')
 
 class TypeIgnore(type_ignore):
@@ -5536,6 +5706,7 @@ class TypeIgnore(type_ignore):
 
     @staticmethod
     def from_object(space, w_node):
+        assert w_node is not None
         w_lineno = get_field(space, w_node, 'lineno', False)
         w_tag = get_field(space, w_node, 'tag', False)
         _lineno = obj_to_int(space, w_lineno, False)
@@ -5543,6 +5714,7 @@ class TypeIgnore(type_ignore):
         if _tag is None:
             raise_required_value(space, w_node, 'tag')
         return TypeIgnore(_lineno, _tag)
+    from_object.__func__.func_name = 'from_object_TypeIgnore'
 
 State.ast_type('TypeIgnore', 'type_ignore', ['lineno', 'tag'], default_none_fields=[], doc='TypeIgnore(int lineno, string tag)')
 

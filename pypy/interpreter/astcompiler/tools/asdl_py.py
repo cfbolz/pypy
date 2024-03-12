@@ -75,12 +75,14 @@ class ASTNodeVisitor(ASDLVisitor):
             self.emit("class %s(AST):" % (base,))
             self.emit("@staticmethod", 1)
             self.emit("def from_object(space, w_node):", 1)
+            self.emit("assert w_node is not None", 2)
             for i, cons in enumerate(sum.types):
                 self.emit("if space.isinstance_w(w_node, get(space).w_%s):"
                           % (cons.name,), 2)
                 self.emit("return %i" % (i+1,), 3)
             self.emit("raise oefmt(space.w_TypeError,", 2)
             self.emit("        \"expected some sort of %s, but got %%R\", w_node)" % (base,), 2)
+            self.emit("from_object.__func__.func_name = 'from_object_%s'" % base, 1)
             doc = asdl_of(base, sum)
             self.emit("State.ast_type('%s', 'AST', None, doc=%r)" % (base, doc))
             self.emit("")
@@ -110,6 +112,7 @@ class ASTNodeVisitor(ASDLVisitor):
                 self.emit("")
             self.emit("@staticmethod", 1)
             self.emit("def from_object(space, w_node):", 1)
+            self.emit("assert w_node is not None", 2)
             self.emit("if space.is_w(w_node, space.w_None):", 2)
             self.emit("    return None", 2)
             for typ in sum.types:
@@ -119,6 +122,7 @@ class ASTNodeVisitor(ASDLVisitor):
                           % (typ.name,), 3)
             self.emit("raise oefmt(space.w_TypeError,", 2)
             self.emit("        \"expected some sort of %s, but got %%R\", w_node)" % (base,), 2)
+            self.emit("from_object.__func__.func_name = 'from_object_%s'" % base, 1)
             doc = asdl_of(base, sum)
             defaults = [x.name for x in sum.attributes if x.opt]
             self.emit("State.ast_type(%r, 'AST', None, %s, default_none_fields=%r, doc=%r)" %
@@ -269,6 +273,7 @@ class ASTNodeVisitor(ASDLVisitor):
         self.emit("")
         self.emit("@staticmethod", 1)
         self.emit("def from_object(space, w_node):", 1)
+        self.emit("assert w_node is not None", 2)
         for field in all_fields:
             self.emit("w_%s = get_field(space, w_node, '%s', %s)" % (
                     field.name, field.name, field.opt), 2)
@@ -278,6 +283,7 @@ class ASTNodeVisitor(ASDLVisitor):
                 self.emit(line, 2)
         self.emit("return %s(%s)" % (
                 name, ', '.join("_%s" % (field.name,) for field in all_fields)), 2)
+        self.emit("from_object.__func__.func_name = 'from_object_%s'" % name, 1)
         self.emit("")
 
     def make_constructor(self, fields, node, extras=None, base=None):
