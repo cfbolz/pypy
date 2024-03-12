@@ -525,6 +525,19 @@ faulthandler_fatal_error(int signum)
 
     faulthandler_dump_traceback(fd, fatal_error.all_threads, ucontext);
 
+    pypy_faulthandler_write(fd, "RPython-level traceback: ");
+    pypy_debug_traceback_print();
+
+    pypy_faulthandler_write(fd, "attempting C level callback: ");
+    void *array[1000];
+    size_t size;
+
+    // get void*'s for all entries on the stack
+    size = backtrace(array, 1000);
+
+    // print out all the frames to stderr
+    backtrace_symbols_fd(array, size, fd);
+
     errno = save_errno;
 #ifdef _WIN32
     if (signum == SIGSEGV) {
