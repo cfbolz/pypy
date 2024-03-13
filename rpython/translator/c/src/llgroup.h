@@ -33,6 +33,18 @@ typedef unsigned short pypy_halfword_t;
 
 typedef unsigned int pypy_halfword_t;
 
+#if defined(RPY_LL_ASSERT)
+#define GROUP_MEMBER_OFFSET(grouptype, membername)  \
+  offsetof(grouptype, membername)
+
+#define _OP_GET_GROUP_MEMBER(groupptr, compactoffset)  \
+  (((char*)groupptr) + (long)compactoffset)
+
+#define _OP_GET_NEXT_GROUP_MEMBER(groupptr, compactoffset, skipoffset)  \
+  (((char*)groupptr) + skipoffset + (long)compactoffset)
+
+#else
+
 #define GROUP_MEMBER_OFFSET(grouptype, membername)  \
   offsetof(grouptype, membername)
 
@@ -47,7 +59,7 @@ typedef unsigned int pypy_halfword_t;
 #define PYPY_GROUP_CHECK_SIZE(groupname)   \
   typedef char group_##groupname##_is_too_large[   \
 	2*(sizeof(groupname) <= 4294967296L)-1];
-
+#endif // defined(RPY_LL_ASSERT)
 
 #endif /*****************************************************/
 
