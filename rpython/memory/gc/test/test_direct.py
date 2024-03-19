@@ -7,6 +7,9 @@ see as the list of roots (stack and prebuilt objects).
 # XXX VERY INCOMPLETE, low coverage
 
 import py
+
+from hypothesis import strategies, given
+
 from rpython.rtyper.lltypesystem import lltype, llmemory
 from rpython.memory.gctypelayout import TypeLayoutBuilder, FIN_HANDLER_ARRAY
 from rpython.rlib.rarithmetic import LONG_BIT, is_valid_int
@@ -14,7 +17,6 @@ from rpython.memory.gc import minimark, incminimark
 from rpython.memory.gctypelayout import zero_gc_pointers_inside, zero_gc_pointers
 from rpython.rlib.debug import debug_print
 from rpython.rlib.test.test_debug import debuglog
-import pdb
 WORD = LONG_BIT // 8
 
 ADDR_ARRAY = lltype.Array(llmemory.Address)
@@ -844,3 +846,230 @@ class TestIncrementalMiniMarkGCFull(DirectGCTest):
             (incminimark.STATE_SWEEPING, incminimark.STATE_FINALIZING),
             (incminimark.STATE_FINALIZING, incminimark.STATE_SCANNING)
             ]
+
+    def test_gc_debug_crash_with_prebuilt_objects(self):
+        from rpython.rlib import rgc
+        def flags(obj):
+            return self.gc.header(llmemory.cast_ptr_to_adr(obj)).tid.rest
+
+        prebuilt = lltype.malloc(S, immortal=True)
+        prebuilt.x = 42
+        self.consider_constant(prebuilt)
+
+        self.gc.DEBUG = 2
+
+        old2 = self.malloc(S)
+        old2.x = 45
+        self.stackroots.append(old2)
+        old = self.malloc(S)
+        old.x = 43
+        self.write(old, 'next', prebuilt)
+        self.stackroots.append(old)
+        val = self.gc.collect_step()
+        assert rgc.old_state(val) == incminimark.STATE_SCANNING
+        assert rgc.new_state(val) == incminimark.STATE_MARKING
+        old2 = self.stackroots[0] # reload
+        old = self.stackroots[1]
+        
+        # now a major next collection starts
+        # run things with TEST_VISIT_SINGLE_STEP = True so we can control
+        # the timing correctly
+        self.gc.TEST_VISIT_SINGLE_STEP = True
+        # run two marking steps, the first one marks obj, the second one
+        # prebuilt (which does nothing), but obj2 is left so we aren't done
+        # with marking
+        val = self.gc.collect_step()
+        val = self.gc.collect_step()
+        assert rgc.old_state(val) == incminimark.STATE_MARKING
+        assert rgc.new_state(val) == incminimark.STATE_MARKING
+        assert flags(old) & incminimark.GCFLAG_VISITED
+        assert (flags(old2) & incminimark.GCFLAG_VISITED) == 0
+        # prebuilt counts as grey but for prebuilt reasons
+        assert (flags(prebuilt) & incminimark.GCFLAG_VISITED) == 0
+        assert flags(prebuilt) & incminimark.GCFLAG_NO_HEAP_PTRS
+        # its write barrier is active
+        assert flags(prebuilt) & incminimark.GCFLAG_TRACK_YOUNG_PTRS
+
+        # now lets write a newly allocated object into prebuilt
+        new = self.malloc(S)
+        new.x = -10
+        # write barrier of prebuilt triggers
+        self.write(prebuilt, 'next', new)
+        # prebuilt got added both to old_objects_pointing_to_young and
+        # prebuilt_root_objects, so those flags get cleared
+        assert (flags(prebuilt) & incminimark.GCFLAG_NO_HEAP_PTRS) == 0
+        assert (flags(prebuilt) & incminimark.GCFLAG_TRACK_YOUNG_PTRS) == 0
+        # thus the prebuilt object now counts as white!
+        assert (flags(prebuilt) & incminimark.GCFLAG_VISITED) == 0
+
+        # this used to trigger the assertion black -> white pointer
+        # for the reference obj -> prebuilt
+        self.gc.collect_step()
+
+class TestIncrementalMiniMarkGCFullRandom(DirectGCTest):
+    from rpython.memory.gc.incminimark import IncrementalMiniMarkGC as GCClass
+
+    def state_setup(self, data):
+        self.setup_method(self.test_random)
+        self.data = data
+        # a model of the current state of the heap
+        self.model = {}
+        self.arraymodel = {}
+        self.gc.TEST_VISIT_SINGLE_STEP = data.draw(strategies.booleans())
+        self.gc.DEBUG = data.draw(strategies.integers(0, 2))
+        self.current_array_length = 1
+        self.make_prebuilts()
+
+    def make_prebuilts(self):
+        prebuilts = self.prebuilts = []
+        data = self.data
+        for i in range(self.data.draw(strategies.integers(1, 10))):
+            prebuilt = lltype.malloc(S, immortal=True)
+            prebuilt.x = ~i
+            prebuilts.append(prebuilt)
+        # initialize next and prev fields
+        for prebuilt in prebuilts:
+            self.consider_constant(prebuilt)
+            prev = prebuilts[data.draw(strategies.integers(0, len(prebuilts)-1))]
+            prebuilt.prev = prev
+            self.model[prebuilt.x, 'prev'] = prev.x
+            next = prebuilts[data.draw(strategies.integers(0, len(prebuilts)-1))]
+            prebuilt.next = next
+            self.model[prebuilt.x, 'next'] = next.x
+        # tell the GC about them
+        for prebuilt in prebuilts:
+            self.consider_constant(prebuilt)
+
+        # prebuilt arrays
+        # XXX hack, arrays are uniquely identified by their lengths :-)
+        prebuilt_arrays = self.prebuilt_arrays = []
+        for i in range(self.data.draw(strategies.integers(1, 10))):
+            array = self.create_array(immortal=True)
+            self.prebuilt_arrays.append(array)
+            self.consider_constant(array)
+
+    def random_obj(self):
+        objects = [obj for obj in self.stackroots if lltype.typeOf(obj) == lltype.Ptr(S)]
+        return self.data.draw(strategies.sampled_from(self.prebuilts + objects))
+
+    def random_array(self):
+        arrays = [obj for obj in self.stackroots if lltype.typeOf(obj) == lltype.Ptr(VAR)]
+        return self.data.draw(strategies.sampled_from(self.prebuilt_arrays + arrays))
+
+    def create_array(self, immortal=False):
+        length = self.current_array_length
+        self.current_array_length += 1
+        if immortal:
+            array = lltype.malloc(VAR, length, immortal=True)
+        else:
+            array = self.malloc(VAR, length)
+        for i in range(length):
+            obj = self.random_obj()
+            if immortal:
+                array[i] = obj
+            else:
+                self.writearray(array, i, obj)
+            self.arraymodel[length, i] = obj.x
+        return array
+
+    def check(self):
+        # walk the reachable heap and compare against model
+        seen = set()
+        seen_arrays = set()
+        todo = self.prebuilts + self.prebuilt_arrays + self.stackroots
+        while todo:
+            obj = todo.pop()
+            if lltype.typeOf(obj) == lltype.Ptr(VAR):
+                if len(obj) in seen_arrays:
+                    continue
+                seen_arrays.add(len(obj))
+                for i in range(len(obj)):
+                    todo.append(obj[i])
+                    assert self.arraymodel[len(obj), i] == obj[i].x
+            else:
+                if obj.x in seen:
+                    continue
+                seen.add(obj.x)
+                todo.append(obj.next)
+                todo.append(obj.prev)
+                assert self.model[obj.x, 'prev'] == obj.prev.x
+                assert self.model[obj.x, 'next'] == obj.next.x
+
+    @given(strategies.data())
+    def test_random(self, data):
+        self.state_setup(data)
+        # make a bunch of prebuilt data
+        for i in range(data.draw(strategies.integers(2, 100))):
+            # perform steps
+            action = data.draw(strategies.integers(len(self.stackroots) == 0, 7))
+            if action == 0: # drop
+                print i, "DROP",
+                index = data.draw(strategies.integers(0, len(self.stackroots)-1))
+                print index
+                del self.stackroots[index]
+            elif action == 1: # alloc
+                print i, "MALLOC"
+                p = self.malloc(S)
+                p.x = i
+                next = self.random_obj()
+                prev = self.random_obj()
+                self.model[i, 'next'] = next.x
+                self.model[i, 'prev'] = prev.x
+                self.write(p, 'next', next)
+                self.write(p, 'prev', prev)
+                self.stackroots.append(p)
+            elif action == 2: # read field
+                obj = self.random_obj()
+                print i, "READ", obj,
+                if data.draw(strategies.booleans()):
+                    res = obj.prev
+                    field = 'prev'
+                else:
+                    res = obj.next
+                    field = 'next'
+                # compare against model
+                self.stackroots.append(res)
+                assert self.model[obj.x, field] == res.x
+                print field
+            elif action == 3:
+                obj1 = self.random_obj()
+                obj2 = self.random_obj()
+                print i, "WRITE", obj1, obj2,
+                if data.draw(strategies.booleans()):
+                    print 'next'
+                    self.write(obj1, 'next', obj2)
+                    self.model[obj1.x, 'next'] = obj2.x
+                else:
+                    print 'prev'
+                    self.write(obj1, 'prev', obj2)
+                    self.model[obj1.x, 'prev'] = obj2.x
+            elif action == 4:
+                print i, "COLLECT"
+                self.gc.collect_step()
+            elif action == 5:
+                print i, "READ_ARRAY",
+                array = self.random_array()
+                index = data.draw(strategies.integers(0, len(array) - 1))
+                print array, index, array[index]
+                assert self.arraymodel[len(array), index] == array[index].x
+                self.stackroots.append(array[index])
+            elif action == 6:
+                print i, "WRITE_ARRAY",
+                array = self.random_array()
+                index = data.draw(strategies.integers(0, len(array) - 1))
+                obj = self.random_obj()
+                print array, index, obj
+                self.writearray(array, index, obj)
+                self.arraymodel[len(array), index] = obj.x
+            elif action == 7:
+                print i, "MALLOC_ARRAY"
+                array = self.create_array()
+                self.stackroots.append(array)
+            else:
+                assert "unreachable"
+
+            self.check()
+        self.gc.collect()
+        self.check()
+        print "END"
+
