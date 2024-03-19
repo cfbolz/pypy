@@ -2420,11 +2420,6 @@ class IncrementalMiniMarkGC(MovingGCBase):
             if (not self.objects_to_trace.non_empty() and
                 not self.more_objects_to_trace.non_empty()):
                 #
-                # First, 'prebuilt_root_objects' might have grown since
-                # we scanned it in collect_roots() (rare case).  Rescan.
-                self.collect_nonstack_roots()
-                self.visit_all_objects()
-                #
                 if self.rrc_enabled:
                     self.rrc_major_collection_trace()
                 #
