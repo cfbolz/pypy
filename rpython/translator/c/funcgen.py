@@ -972,7 +972,6 @@ class FunctionCodeGenerator(object):
         return '/* JIT_LEAVE_PORTAL_FRAME %s */' % op
 
     def OP_GET_GROUP_MEMBER(self, op):
-        import pdb;pdb.set_trace()
         typename = self.db.gettype(op.result.concretetype)
         return '%s = (%s)_OP_GET_GROUP_MEMBER(%s, %s);' % (
             self.expr(op.result),

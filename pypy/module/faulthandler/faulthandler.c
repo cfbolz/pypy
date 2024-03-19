@@ -529,11 +529,11 @@ faulthandler_fatal_error(int signum)
     pypy_debug_traceback_print();
 
     pypy_faulthandler_write(fd, "attempting C level callback: ");
-    void *array[100];
+    void *array[1000];
     size_t size;
 
     // get void*'s for all entries on the stack
-    size = backtrace(array, 100);
+    size = backtrace(array, 1000);
 
     // print out all the frames to stderr
     backtrace_symbols_fd(array, size, fd);
