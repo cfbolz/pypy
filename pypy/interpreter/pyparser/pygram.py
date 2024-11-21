@@ -53,10 +53,12 @@ tokens = _Tokens()
 
 # a few special token numbers for the tokenizer. They never end up in a Token
 # instance
-_Tokens.TOK_STRING_CONTINUATION = -3
-_Tokens.TOK_TRIPLE_QUOTE_START = -4
-_Tokens.TOK_COMMENT = -5
-_Tokens.TOK_LINECONT = -6
+_Tokens.TOK_STRING_CONTINUATION_SINGLE = -3
+_Tokens.TOK_STRING_CONTINUATION_DOUBLE = -4
+_Tokens.TOK_TRIPLE_QUOTE_START_SINGLE = -5
+_Tokens.TOK_TRIPLE_QUOTE_START_DOUBLE = -6
+_Tokens.TOK_COMMENT = -7
+_Tokens.TOK_LINECONT = -8
 
 python_opmap = {}
 for op, idx in pytoken.python_opmap.iteritems():

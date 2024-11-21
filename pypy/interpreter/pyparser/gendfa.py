@@ -44,11 +44,13 @@ def makePyPseudoDFA ():
                      any(states, notGroupStr(states, "\r\n")))
     # ____________________________________________________________
     # Names
-    name = chain(states,
-                 groupStr(states, string.letters + "_"),
-                 any(states, groupStr(states,
-                                      string.letters + string.digits + "_")))
-    label(labels, name, "NAME")
+    name = label(
+        labels,
+        chain(states,
+              groupStr(states, string.letters + "_"),
+              any(states, groupStr(states,
+                                   string.letters + string.digits + "_"))),
+        "NAME")
     # ____________________________________________________________
     # Digits
     def makeDigits ():
@@ -114,8 +116,10 @@ def makePyPseudoDFA ():
                              groupStr(states, "jJ")))
     # ____________________________________________________________
     # Any old number
-    number = group(states, imagNumber, makeFloat(), intNumber)
-    label(labels, number, "NUMBER")
+    number = label(
+        labels,
+        group(states, imagNumber, makeFloat(), intNumber),
+        "NUMBER")
 
     # ____________________________________________________________
     # Funny
@@ -124,15 +128,15 @@ def makePyPseudoDFA ():
     for op in sorted(pygram.python_opmap):
         if op == "$NUM":
             continue
-        funny.append(chain(states, chainStr(states, op)))
-        label(labels, funny[-1], op)
-    revdb_metavar = chain(states,
-                          groupStr(states, "$"),
-                          atleastonce(states, makeDigits()))
-    label(labels, revdb_metavar, "REVDBMETAVAR")
+        funny.append(label(labels, chain(states, chainStr(states, op)), op))
+    revdb_metavar = label(
+        labels,
+        chain(states,
+              groupStr(states, "$"),
+              atleastonce(states, makeDigits())),
+        "REVDBMETAVAR")
     funny.append(revdb_metavar)
-    eol = makeEOL()
-    label(labels, eol, "NEWLINE")
+    eol = label(labels, makeEOL(), "NEWLINE")
     funny.append(eol)
     funny = group(states, *funny)
     # ____________________________________________________________
@@ -141,13 +145,7 @@ def makePyPseudoDFA ():
                      maybe(states, groupStr(states, "uUbB")),
                      maybe(states, groupStr(states, "rR")))
     # ____________________________________________________________
-    def makeStr(quote):
-        regular_end = newArcPair(states, quote)
-        # add a label to the closing quote where a string is finished on one
-        # line
-        label(labels, regular_end, "STRING")
-        continuation_end = makeLineCont()
-        label(labels, continuation_end, "TOK_STRING_CONTINUATION")
+    def makeStr(quote, cont_label):
         return chain(
             states,
             makeStrPrefix(),
@@ -161,30 +159,26 @@ def makePyPseudoDFA ():
                       any(states,
                           notGroupStr(states, "\r\n%s\\" % quote)))),
             group(states,
-                  regular_end,
-                  continuation_end))
+                  # add a label to the closing quote where a string is finished
+                  # on one line
+                  label(labels, newArcPair(states, quote), "STRING"),
+                  # special label for continuation end
+                  label(labels, makeLineCont(), cont_label)))
     contStr = group(states,
-                    makeStr('"'),
-                    makeStr("'"))
+                    makeStr('"', "TOK_STRING_CONTINUATION_DOUBLE"),
+                    makeStr("'", "TOK_STRING_CONTINUATION_SINGLE"))
     triple = chain(states,
                    makeStrPrefix(),
                    group(states,
-                         chainStr(states, "'''"),
-                         chainStr(states, '"""')))
-    label(labels, triple, "TOK_TRIPLE_QUOTE_START")
-    comment = makeComment()
-    label(labels, comment, "TOK_COMMENT")
-    linecont = makeLineCont()
-    label(labels, linecont, "TOK_LINECONT")
+                         label(labels, chainStr(states, "'''"), "TOK_TRIPLE_QUOTE_START_SINGLE"),
+                         label(labels, chainStr(states, '"""'), "TOK_TRIPLE_QUOTE_START_DOUBLE")))
     pseudoExtras = group(states,
-                         linecont,
-                         comment,
+                         label(labels, makeLineCont(), "TOK_LINECONT"),
+                         label(labels, makeComment(), "TOK_COMMENT"),
                          triple)
-    pseudoToken = chain(states,
-                        makeWhitespace(),
-                        group(states,
-                              newArcPair(states, EMPTY),
-                              pseudoExtras, number, funny, contStr, name))
+    pseudoToken = group(states,
+                        newArcPair(states, EMPTY),
+                        pseudoExtras, number, funny, contStr, name)
     label(labels, pseudoToken, "ACCEPT")
     dfaStates, dfaAccepts = nfaToDfa(states, pseudoToken[0], labels)
     #view(dfaStates, dfaAccepts)

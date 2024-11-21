@@ -10,34 +10,11 @@ expressions have been replaced with hand built DFA's using the
 basil.util.automata module.
 
 """
-# ______________________________________________________________________
-
-from pypy.interpreter.pyparser import automata
 from pypy.interpreter.pyparser.dfa_generated import *
-
-__all__ = [ "tokenize" ]
-
-endDFAs = {"'" : singleDFA,
-           '"' : doubleDFA,
-           'r' : None,
-           'R' : None,
-           'u' : None,
-           'U' : None,
-           'b' : None,
-           'B' : None}
-
-for uniPrefix in ("", "u", "U", "b", "B"):
-    for rawPrefix in ("", "r", "R"):
-        prefix = uniPrefix + rawPrefix
-        endDFAs[prefix + "'''"] = single3DFA
-        endDFAs[prefix + '"""'] = double3DFA
 
 whiteSpaceStatesAccepts = [True]
 whiteSpaceStates = [{'\t': 0, ' ': 0, '\x0c': 0}]
 whiteSpaceDFA = automata.DFA(whiteSpaceStates, whiteSpaceStatesAccepts)
-
-# ______________________________________________________________________
-# COPIED:
 
 triple_quoted = {}
 for t in ("'''", '"""',

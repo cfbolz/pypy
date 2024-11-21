@@ -3,7 +3,8 @@ from pypy.interpreter.pyparser.parser import Token
 from pypy.interpreter.pyparser.pygram import tokens, python_opmap
 from pypy.interpreter.pyparser.error import TokenError, TokenIndentationError
 from pypy.interpreter.pyparser.pytokenize import tabsize, whiteSpaceDFA, \
-    triple_quoted, endDFAs, single_quoted, pseudoDFA
+    triple_quoted, single_quoted, pseudoDFA, singleDFA, single3DFA, \
+    doubleDFA, double3DFA
 from pypy.interpreter.astcompiler import consts
 
 NAMECHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_'
@@ -44,8 +45,6 @@ def match_encoding_declaration(comment):
     return None
 
 
-DUMMY_DFA = automata.DFA([], [])
-
 def generate_tokens(lines, flags):
     """
     This is a rewrite of pypy.module.parser.pytokenize.generate_tokens since
@@ -83,7 +82,7 @@ def generate_tokens(lines, flags):
     parenstack = []
 
     # make the annotator happy
-    endDFA = DUMMY_DFA
+    endDFA = None
     # make the annotator happy
     line = ''
     pos = 0
@@ -100,6 +99,7 @@ def generate_tokens(lines, flags):
                     "end of file (EOF) while scanning triple-quoted string literal",
                     strstart[2], strstart[0], strstart[1]+1,
                     token_list, lnum-1)
+            assert endDFA is not None
             endmatch = endDFA.recognize(line)
             if endmatch >= 0:
                 pos = end = endmatch
@@ -109,6 +109,7 @@ def generate_tokens(lines, flags):
                 token_list.append(tok)
                 last_comment = ''
                 contstrs, needcont = [], False
+                endDFA = None
             elif (needcont and not line.endswith('\\\n') and
                                not line.endswith('\\\r\n')):
                 contstrs.append(line)
@@ -172,6 +173,9 @@ def generate_tokens(lines, flags):
                 end = pseudomatch
 
                 if start == end:
+                    if start < max and line[start] in single_quoted:
+                        raise TokenError("end of line (EOL) while scanning string literal",
+                                 line, lnum, start+1, token_list)
                     raise TokenError("Unknown character", line,
                                      lnum, start + 1, token_list)
 
@@ -186,8 +190,14 @@ def generate_tokens(lines, flags):
                 elif token_type == tokens.TOK_COMMENT:
                     # skip comment
                     last_comment = token
-                elif token_type == tokens.TOK_TRIPLE_QUOTE_START:
-                    endDFA = endDFAs[token]
+                elif (
+                    token_type == tokens.TOK_TRIPLE_QUOTE_START_SINGLE or
+                    token_type == tokens.TOK_TRIPLE_QUOTE_START_DOUBLE
+                ):
+                    if token_type == tokens.TOK_TRIPLE_QUOTE_START_SINGLE:
+                        endDFA = single3DFA
+                    else:
+                        endDFA = double3DFA
                     endmatch = endDFA.recognize(line, pos)
                     if endmatch >= 0:                     # all on one line
                         pos = endmatch
@@ -199,11 +209,16 @@ def generate_tokens(lines, flags):
                         strstart = (lnum, start, line)
                         contstrs = [line[start:]]
                         break
-                elif token_type == tokens.TOK_STRING_CONTINUATION:
+                elif (
+                    token_type == tokens.TOK_STRING_CONTINUATION_SINGLE or
+                    token_type == tokens.TOK_STRING_CONTINUATION_DOUBLE
+                ):
+                    if token_type == tokens.TOK_STRING_CONTINUATION_SINGLE:
+                        endDFA = singleDFA
+                    else:
+                        endDFA = doubleDFA
                     assert token[-1] == '\n' # continued string
                     strstart = (lnum, start, line)
-                    endDFA = (endDFAs[initial] or endDFAs[token[1]] or
-                               endDFAs[token[2]])
                     contstrs, needcont = [line[start:]], True
                     break
                 elif token_type == tokens.TOK_LINECONT: # continued stmt

@@ -23,3 +23,6 @@ def test_number_bug():
     assert res == 1
     assert pseudoDFA.state_to_token[pseudoDFA.last_state] == tokens.NUMBER
 
+def test_error_eof_string():
+    res = pseudoDFA.recognize("0\n", 0)
+

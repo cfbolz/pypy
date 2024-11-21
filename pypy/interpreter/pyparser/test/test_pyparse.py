@@ -84,6 +84,10 @@ stuff = "nothing"
         assert exc.msg == "end of line (EOL) while scanning string literal"
         assert exc.lineno == 1
         assert exc.offset == 5
+        exc = py.test.raises(SyntaxError, parse, "x = r\"blah\n\n\n").value
+        assert exc.msg == "end of line (EOL) while scanning string literal"
+        assert exc.lineno == 1
+        assert exc.offset == 6
         exc = py.test.raises(SyntaxError, parse, "x = '''\n\n\n").value
         assert exc.msg == "end of file (EOF) while scanning triple-quoted string literal"
         assert exc.lineno == 1
