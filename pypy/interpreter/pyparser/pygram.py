@@ -15,7 +15,7 @@ class PythonGrammar(parser.Grammar):
                 return label_index
         label_index = token.token_type
         if label_index == -1 or (label_index == tokens.REVDBMETAVAR and not self.revdb):
-            raise ParseError("invalid token", token)
+            raise parser.ParseError("invalid token", token)
         return label_index
 
 def _get_python_grammar():
