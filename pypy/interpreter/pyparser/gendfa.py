@@ -16,11 +16,12 @@ $Id: genPytokenize.py,v 1.1 2003/10/02 17:37:17 jriehl Exp $
 
 from pypy.interpreter.pyparser.pylexer import *
 from pypy.interpreter.pyparser.automata import NonGreedyDFA, DFA, DEFAULT
-from pypy.interpreter.pyparser import pytoken
+from pypy.interpreter.pyparser import pygram
 
 def makePyPseudoDFA ():
     import string
     states = []
+    labels = {}
     def makeEOL():
         return group(states,
                      newArcPair(states, "\n"),
@@ -42,18 +43,12 @@ def makePyPseudoDFA ():
                      newArcPair(states, "#"),
                      any(states, notGroupStr(states, "\r\n")))
     # ____________________________________________________________
-    #ignore = chain(states,
-    #               makeWhitespace(),
-    #               any(states, chain(states,
-    #                                 makeLineCont(),
-    #                                 makeWhitespace())),
-    #               maybe(states, makeComment()))
-    # ____________________________________________________________
     # Names
     name = chain(states,
                  groupStr(states, string.letters + "_"),
                  any(states, groupStr(states,
                                       string.letters + string.digits + "_")))
+    label(labels, name, "NAME")
     # ____________________________________________________________
     # Digits
     def makeDigits ():
@@ -118,21 +113,27 @@ def makePyPseudoDFA ():
                              makeFloat(),
                              groupStr(states, "jJ")))
     # ____________________________________________________________
-    # Any old number.
+    # Any old number
     number = group(states, imagNumber, makeFloat(), intNumber)
+    label(labels, number, "NUMBER")
+
     # ____________________________________________________________
     # Funny
     # generate from pytoken
     funny = []
-    for op in sorted(pytoken.python_opmap):
+    for op in sorted(pygram.python_opmap):
         if op == "$NUM":
             continue
-        funny.append(chainStr(states, op))
+        funny.append(chain(states, chainStr(states, op)))
+        label(labels, funny[-1], op)
     revdb_metavar = chain(states,
                           groupStr(states, "$"),
                           atleastonce(states, makeDigits()))
+    label(labels, revdb_metavar, "REVDBMETAVAR")
     funny.append(revdb_metavar)
-    funny.append(makeEOL())
+    eol = makeEOL()
+    label(labels, eol, "NEWLINE")
+    funny.append(eol)
     funny = group(states, *funny)
     # ____________________________________________________________
     def makeStrPrefix ():
@@ -140,51 +141,71 @@ def makePyPseudoDFA ():
                      maybe(states, groupStr(states, "uUbB")),
                      maybe(states, groupStr(states, "rR")))
     # ____________________________________________________________
+    def makeStr(quote):
+        regular_end = newArcPair(states, quote)
+        # add a label to the closing quote where a string is finished on one
+        # line
+        label(labels, regular_end, "STRING")
+        continuation_end = makeLineCont()
+        label(labels, continuation_end, "TOK_STRING_CONTINUATION")
+        return chain(
+            states,
+            makeStrPrefix(),
+            newArcPair(states, quote),
+            any(states,
+                notGroupStr(states, "\r\n%s\\" % quote)),
+            any(states,
+                chain(states,
+                      newArcPair(states, "\\"),
+                      newArcPair(states, DEFAULT),
+                      any(states,
+                          notGroupStr(states, "\r\n%s\\" % quote)))),
+            group(states,
+                  regular_end,
+                  continuation_end))
     contStr = group(states,
-                    chain(states,
-                          makeStrPrefix(),
-                          newArcPair(states, "'"),
-                          any(states,
-                              notGroupStr(states, "\r\n'\\")),
-                          any(states,
-                              chain(states,
-                                    newArcPair(states, "\\"),
-                                    newArcPair(states, DEFAULT),
-                                    any(states,
-                                        notGroupStr(states, "\r\n'\\")))),
-                          group(states,
-                                newArcPair(states, "'"),
-                                makeLineCont())),
-                    chain(states,
-                          makeStrPrefix(),
-                          newArcPair(states, '"'),
-                          any(states,
-                              notGroupStr(states, '\r\n"\\')),
-                          any(states,
-                              chain(states,
-                                    newArcPair(states, "\\"),
-                                    newArcPair(states, DEFAULT),
-                                    any(states,
-                                        notGroupStr(states, '\r\n"\\')))),
-                          group(states,
-                                newArcPair(states, '"'),
-                                makeLineCont())))
+                    makeStr('"'),
+                    makeStr("'"))
     triple = chain(states,
                    makeStrPrefix(),
                    group(states,
                          chainStr(states, "'''"),
                          chainStr(states, '"""')))
+    label(labels, triple, "TOK_TRIPLE_QUOTE_START")
+    comment = makeComment()
+    label(labels, comment, "TOK_COMMENT")
+    linecont = makeLineCont()
+    label(labels, linecont, "TOK_LINECONT")
     pseudoExtras = group(states,
-                         makeLineCont(),
-                         makeComment(),
+                         linecont,
+                         comment,
                          triple)
     pseudoToken = chain(states,
                         makeWhitespace(),
                         group(states,
                               newArcPair(states, EMPTY),
                               pseudoExtras, number, funny, contStr, name))
-    dfaStates, dfaAccepts = nfaToDfa(states, *pseudoToken)
-    return DFA(dfaStates, dfaAccepts), dfaStates
+    label(labels, pseudoToken, "ACCEPT")
+    dfaStates, dfaAccepts = nfaToDfa(states, pseudoToken[0], labels)
+    #view(dfaStates, dfaAccepts)
+
+    # make accepting states to tokens or -1
+    state_to_token = []
+    accepts = []
+    for i, labels_of_state in enumerate(dfaAccepts):
+        accepts.append(len(labels_of_state) != 0)
+        tokenid = -2
+        if labels_of_state:
+            if labels_of_state == frozenset(["ACCEPT"]):
+                tokenid = -1
+            else:
+                rest = labels_of_state - frozenset(["ACCEPT"])
+                statelabel, = rest
+                tokenid = getattr(pygram.tokens, statelabel, None)
+                if tokenid is None:
+                    tokenid = pygram.python_opmap[statelabel]
+        state_to_token.append(tokenid)
+    return DFA(dfaStates, accepts), dfaStates, state_to_token
 
 # ______________________________________________________________________
 
@@ -264,7 +285,7 @@ def makePyEndDFAMap ():
 
 # ______________________________________________________________________
 
-def output(name, dfa_class, dfa, states):
+def output(name, dfa_class, dfa, states, state_to_token=None):
     import textwrap
     lines = []
     i = 0
@@ -281,6 +302,8 @@ def output(name, dfa_class, dfa, states):
     for numstate, state in enumerate(states):
         lines.append("    # ")
         lines.append(str(numstate))
+        if dfa.accepts[numstate]:
+            lines.append(" (accepts)")
         lines.append('\n')
         s = StringIO.StringIO()
         i = 0
@@ -312,6 +335,7 @@ def output(name, dfa_class, dfa, states):
             i += 1
     lines.append("    ]\n")
     lines.append("%s = automata.%s(states, accepts)\n" % (name, dfa_class))
+    lines.append("%s.state_to_token = %s\n" % (name, state_to_token))
     return ''.join(lines)
 
 def main ():
@@ -321,8 +345,8 @@ def main ():
     print "#     python gendfa.py > dfa_generated.py"
     print
     print "from pypy.interpreter.pyparser import automata"
-    pseudoDFA, states_pseudoDFA = makePyPseudoDFA()
-    print output("pseudoDFA", "DFA", pseudoDFA, states_pseudoDFA)
+    pseudoDFA, states_pseudoDFA, state_to_token = makePyPseudoDFA()
+    print output("pseudoDFA", "DFA", pseudoDFA, states_pseudoDFA, state_to_token)
     endDFAMap = makePyEndDFAMap()
     dfa, states = endDFAMap['"""']
     print output("double3DFA", "NonGreedyDFA", dfa, states)

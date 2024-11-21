@@ -9,6 +9,7 @@ class PythonGrammar(parser.Grammar):
 
     def classify(self, token):
         """Find the label for a token."""
+        from pypy.interpreter.pyparser.parser import ParseError
         if token.token_type == self.KEYWORD_TOKEN:
             label_index = self.keyword_ids.get(token.value, -1)
             if label_index != -1:
@@ -49,6 +50,13 @@ for tok_name, idx in pytoken.python_tokens.iteritems():
     if tok_name == "NAME":
         PythonGrammar.KEYWORD_TOKEN = python_grammar.token_ids[idx]
 tokens = _Tokens()
+
+# a few special token numbers for the tokenizer. They never end up in a Token
+# instance
+_Tokens.TOK_STRING_CONTINUATION = -3
+_Tokens.TOK_TRIPLE_QUOTE_START = -4
+_Tokens.TOK_COMMENT = -5
+_Tokens.TOK_LINECONT = -6
 
 python_opmap = {}
 for op, idx in pytoken.python_opmap.iteritems():

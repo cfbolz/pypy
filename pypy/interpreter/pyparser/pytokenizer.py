@@ -163,33 +163,30 @@ def generate_tokens(lines, flags):
             continued = 0
 
         while pos < max:
-            pseudomatch = pseudoDFA.recognize(line, pos)
             start = whiteSpaceDFA.recognize(line, pos)
-            if pseudomatch >= 0:                            # scan for tokens
+            if start < 0:
+                start = pos
+            pseudomatch = pseudoDFA.recognize(line, start)
+            if pseudomatch >= start: # scan for tokens
                 # JDR: Modified
-                if start < 0:
-                    start = pos
                 end = pseudomatch
 
                 if start == end:
                     raise TokenError("Unknown character", line,
                                      lnum, start + 1, token_list)
 
+                token_type = pseudoDFA.state_to_token[pseudoDFA.last_state]
                 pos = end
                 token, initial = line[start:end], line[start]
-                if initial in numchars or \
-                   (initial == '.' and end > start + 1): # ordinary number, the second condition rules out "."
-                    token_list.append(Token(tokens.NUMBER, token, lnum, start, line))
-                    last_comment = ''
-                elif initial in '\r\n':
+                if token_type == tokens.NEWLINE:
                     if not parenstack:
                         tok = Token(tokens.NEWLINE, last_comment, lnum, start, line)
                         token_list.append(tok)
                     last_comment = ''
-                elif initial == '#':
+                elif token_type == tokens.TOK_COMMENT:
                     # skip comment
                     last_comment = token
-                elif token in triple_quoted:
+                elif token_type == tokens.TOK_TRIPLE_QUOTE_START:
                     endDFA = endDFAs[token]
                     endmatch = endDFA.recognize(line, pos)
                     if endmatch >= 0:                     # all on one line
@@ -202,38 +199,23 @@ def generate_tokens(lines, flags):
                         strstart = (lnum, start, line)
                         contstrs = [line[start:]]
                         break
-                elif initial in single_quoted or \
-                    token[:2] in single_quoted or \
-                    token[:3] in single_quoted:
-                    if token[-1] == '\n':                  # continued string
-                        strstart = (lnum, start, line)
-                        endDFA = (endDFAs[initial] or endDFAs[token[1]] or
-                                   endDFAs[token[2]])
-                        contstrs, needcont = [line[start:]], True
-                        break
-                    else:                                  # ordinary string
-                        tok = Token(tokens.STRING, token, lnum, start, line)
-                        token_list.append(tok)
-                        last_comment = ''
-                elif initial in namechars:                 # ordinary name
-                    token_list.append(Token(tokens.NAME, token, lnum, start, line))
-                    last_comment = ''
-                elif initial == '\\':                      # continued stmt
+                elif token_type == tokens.TOK_STRING_CONTINUATION:
+                    assert token[-1] == '\n' # continued string
+                    strstart = (lnum, start, line)
+                    endDFA = (endDFAs[initial] or endDFAs[token[1]] or
+                               endDFAs[token[2]])
+                    contstrs, needcont = [line[start:]], True
+                    break
+                elif token_type == tokens.TOK_LINECONT: # continued stmt
                     continued = 1
-                elif initial == '$':
-                    token_list.append(Token(tokens.REVDBMETAVAR, token,
-                                       lnum, start, line))
-                    last_comment = ''
                 else:
-                    if token in python_opmap:
-                        punct = python_opmap[token]
-                    else:
-                        assert 0, "unreachable"
-                        punct = tokens.OP
-                    tok = Token(punct, token, lnum, start, line)
-                    if initial in '([{':
+                    assert token_type >= 0
+                    # handles a bit everything, all operators, NUMBER, NAME,
+                    # STRING, REVDBMETAVAR
+                    tok = Token(token_type, token, lnum, start, line)
+                    if token_type == tokens.LPAR or token_type == tokens.LSQB or token_type == tokens.LBRACE:
                         parenstack.append(tok)
-                    elif initial in ')]}':
+                    elif token_type == tokens.RPAR or token_type == tokens.RSQB or token_type == tokens.RBRACE:
                         if not parenstack:
                             raise TokenError("unmatched '%s'" % initial, line,
                                              lnum, start + 1, token_list)

@@ -121,6 +121,10 @@ def closure(states, start, result = frozenset()):
 
 # ______________________________________________________________________
 
+def label(labels, arc, label):
+    labels[arc[1]] = label
+    return arc
+
 def _pick_end_label(labels, closure):
     if not isinstance(labels, dict):
         return labels in closure
@@ -269,7 +273,7 @@ def _dot(states, final, r):
                 r.append('s%s -> s%s [label="default", color=green];' % (i, target))
                 continue
             elif type(char) is str and len(char) == 1 and ord(char) < 32:
-                char = ord(char)
+                char = " " + str(ord(char)) + " "
             elif char == "\\":
                 char = " \\\\ "
             elif char == '"':

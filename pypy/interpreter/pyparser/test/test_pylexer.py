@@ -38,7 +38,7 @@ def test_dont_merge_labels():
 
 def test_python_keywords_and_names():
     import string
-    from pypy.interpreter.pyparser.pygram import python_grammar
+    from pypy.interpreter.pyparser.pygram import python_grammar, python_opmap
     from pypy.interpreter.pyparser.automata import DFA
     states = []
     name = chain(states,
@@ -50,8 +50,13 @@ def test_python_keywords_and_names():
     for keyword in python_grammar.keyword_ids:
         keywords.append(chainStr(states, keyword))
         labels[keywords[-1][1]] = keyword
-    res = group(states, name, *keywords)
+    ops = []
+    for op in python_opmap:
+        ops.append(chainStr(states, op))
+        labels[ops[-1][1]] = op
+    res = group(states, name, *(keywords + ops))
     dfa = nfaToDfa(states, res[0], labels)
+    view(*dfa)
     aut = DFA(dfa[0], [bool(x) for x in dfa[1]])
     for keyword in python_grammar.keyword_ids:
         res = aut.recognize(keyword)

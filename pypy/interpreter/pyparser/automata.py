@@ -83,16 +83,17 @@ class DFA:
             if ord(item) > 0x80:
                 item = NON_ASCII
             accept = self.accepts[crntState]
+            prevstate = crntState
             crntState = self._next_state(item, crntState)
             if crntState != ERROR_STATE:
                 pass
             elif accept:
-                self.last_state = crntState
+                self.last_state = prevstate
                 return i
             elif lastAccept:
                 # This is now needed b/c of exception cases where there are
                 # transitions to dead states
-                self.last_state = crntState
+                self.last_state = ord(crntState)
                 return i - 1
             else:
                 return -1
@@ -103,6 +104,7 @@ class DFA:
             self.last_state = crntState
             return i + 1
         elif lastAccept:
+            self.last_state = prevstate
             return i
         else:
             return -1
