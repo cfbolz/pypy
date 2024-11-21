@@ -3,6 +3,9 @@ from rpython.rtyper.test.tool import BaseRtypingTest
 from rpython.tool.udir import udir
 from rpython.rlib import rfile
 
+__pypy__ = "__pypy__" in sys.builtin_module_names
+
+PYTHON = sys.executable
 
 class TestFile(BaseRtypingTest):
     def setup_class(cls):
@@ -90,7 +93,7 @@ class TestFile(BaseRtypingTest):
         f(sys.version_info >= (2, 7, 9))
         self.interpret(f, [True])
 
-    @py.test.mark.skipif("sys.platform == 'win32'")
+    @py.test.mark.skipif("sys.platform == 'win32' or sys.platform == 'darwin'")
     # http://msdn.microsoft.com/en-us/library/86cebhfs.aspx
     def test_open_buffering_line(self):
         fname = str(self.tmpdir.join('file_1a'))
@@ -108,7 +111,7 @@ class TestFile(BaseRtypingTest):
         os.unlink(fname)
         self.interpret(f, [])
 
-    @py.test.mark.skipif("sys.platform == 'win32'")
+    @py.test.mark.skipif("sys.platform == 'win32' or sys.platform == 'darwin'")
     # http://msdn.microsoft.com/en-us/library/86cebhfs.aspx
     def test_fdopen_buffering_line(self):
         fname = str(self.tmpdir.join('file_1a'))
@@ -128,39 +131,55 @@ class TestFile(BaseRtypingTest):
         os.unlink(fname)
         self.interpret(f, [])
 
+    @py.test.mark.skipif('sys.platform == "darwin"')
     def test_open_buffering_full(self):
         fname = str(self.tmpdir.join('file_1b'))
 
         def f():
-            f = open(fname, 'w', 128)
-            f.write('dupa\ndupb')
-            f2 = open(fname, 'r')
-            assert f2.read() == ''
-            f.write('z' * 120)
-            assert f2.read() != ''
-            f.close()
-            assert f2.read() != ''
-            f2.close()
+            with open(fname, "w", 128) as f_writer:
+                f_writer.write('dupa\ndupb')
+                with open(fname, "r", 0) as f_reader:
+                    assert f_reader.read() == ''
+                    f_writer.write('z' * 120)
+                    if __pypy__:
+                        # PyPy will flush all 129 characters in a single op
+                        # causing the second read bellow to fail without this:
+                        f_writer.write('z')
+
+                    # This read should get all of the flushed data, but not everything
+                    # (because our writes are buffered)
+                    assert f_reader.read() != ''
+                    f_writer.close()
+                    # Closing the file should flush the unread bytes
+                    assert f_reader.read() != ''
 
         f()
         os.unlink(fname)
         self.interpret(f, [])
 
+    @py.test.mark.skipif('sys.platform == "darwin"')
     def test_fdopen_buffering_full(self):
         fname = str(self.tmpdir.join('file_1b'))
 
         def f():
-            g = open(fname, 'w')
-            f = os.fdopen(os.dup(g.fileno()), 'w', 128)
-            g.close()
-            f.write('dupa\ndupb')
-            f2 = open(fname, 'r')
-            assert f2.read() == ''
-            f.write('z' * 120)
-            assert f2.read() != ''
-            f.close()
-            assert f2.read() != ''
-            f2.close()
+            with open(fname, "w") as g:
+                with os.fdopen(os.dup(g.fileno()), 'w', 128) as f_writer:
+                    g.close()
+                    f_writer.write('dupa\ndupb')
+                    with open(fname, 'r', 0) as f_reader:
+                        assert f_reader.read() == ''
+                        f_writer.write('z' * 120)
+                        if __pypy__:
+                            # PyPy will flush all 129 characters in a single op
+                            # causing the second read bellow to fail without this:
+                            f_writer.write('z')
+
+                        # This read should get all of the flushed data, but not everything
+                        # (because our writes are buffered)
+                        assert f_reader.read() != ''
+                        f_writer.close()
+                        # Closing the file should flush the unread bytes
+                        assert f_reader.read() != ''
 
         f()
         os.unlink(fname)
@@ -509,16 +528,17 @@ class TestPopen(object):
             py.test.skip("not for win32")
 
     def test_popen(self):
-        f = rfile.create_popen_file("python -c 'print(42)'", "r")
+        f = rfile.create_popen_file("%s -c 'print(42)'" % PYTHON, "r")
         s = f.read()
         f.close()
         assert s == '42\n'
 
+    @py.test.mark.skipif('sys.platform == "darwin"')
     def test_pclose(self):
         retval = 32
         printval = 42
-        cmd = "python -c 'import sys; print(%s); sys.exit(%s)'" % (
-            printval, retval)
+        cmd = "%s -c 'import sys; print(%s); sys.exit(%s)'" % (
+            PYTHON, printval, retval)
         f = rfile.create_popen_file(cmd, "r")
         s = f.read()
         r = f.close()
@@ -530,10 +550,12 @@ class TestPopenR(BaseRtypingTest):
     def setup_class(cls):
         if sys.platform == 'win32':
             py.test.skip("not for win32")
+        if sys.platform == 'darwin':
+            py.test.skip("not for os x")
 
     def test_popen(self):
         printval = 42
-        cmd = "python -c 'print(%s)'" % printval
+        cmd = "%s -c 'print(%s)'" % (PYTHON, printval)
         def f():
             f = rfile.create_popen_file(cmd, "r")
             s = f.read()
@@ -544,8 +566,8 @@ class TestPopenR(BaseRtypingTest):
     def test_pclose(self):
         printval = 42
         retval = 32
-        cmd = "python -c 'import sys; print(%s); sys.exit(%s)'" % (
-            printval, retval)
+        cmd = "%s -c 'import sys; print(%s); sys.exit(%s)'" % (
+            PYTHON, printval, retval)
         def f():
             f = rfile.create_popen_file(cmd, "r")
             s = f.read()

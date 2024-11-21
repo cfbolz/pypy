@@ -6,7 +6,7 @@ Getting involved
 
 We are happy to discuss ideas around the PyPy ecosystem.
 If you are interested in playing with RPython or PyPy, or have a new idea not
-mentioned here please join us on irc, channel #pypy (freenode). If you are unsure,
+mentioned here please join us on irc, channel #pypy (irc.libera.chat). If you are unsure,
 but still think that you can make a valuable contribution to PyPy, dont
 hesitate to contact us on #pypy or on our mailing list. Here are some ideas
 to get you thinking:
@@ -41,10 +41,10 @@ Simple tasks for newcomers
 --------------------------
 
 * Optimize random:
-  https://foss.heptapod.net/pypy/pypy/-/issues/1901
+  https://github.com/pypy/pypy/issues/1901
 
 * Implement AF_XXX packet types of sockets:
-  https://foss.heptapod.net/pypy/pypy/-/issues/1942
+  https://github.com/pypy/pypy/issues/1942
 
 * Help with documentation. One task would be to document rpython configuration
   options currently listed only on :doc:`this site <configuration>` also on the
@@ -60,7 +60,7 @@ who are seriously interested in the PyPy project. They mostly share common
 patterns - they're mid-to-large in size, they're usually well defined as
 a standalone projects and they're not being actively worked on. For small
 projects that you might want to work on look above or either look
-at the `issue tracker`_, pop up on #pypy on irc.freenode.net or write to the
+at the `issue tracker`_, pop up on #pypy on irc.libera.chat or write to the
 `mailing list`_. This is simply for the reason that small possible projects
 tend to change very rapidly.
 
@@ -70,7 +70,7 @@ own improvement ideas. In any case, if you feel like working on some of those
 projects, or anything else in PyPy, pop up on IRC or write to us on the
 `mailing list`_.
 
-.. _issue tracker: https://foss.heptapod.net/pypy/pypy/-/issues
+.. _issue tracker: https://github.com/pypy/pypy/issues/
 .. _mailing list: https://mail.python.org/mailman/listinfo/pypy-dev
 
 
@@ -107,7 +107,7 @@ immediately, but only when (and if) ``myslice`` or ``mylist`` are mutated.
 NumPy rebooted
 --------------
 
-Our cpyext C-API compatiblity layer can now run upstream NumPy unmodified.
+Our cpyext C-API compatibility layer can now run upstream NumPy unmodified.
 We need to refactor the way `NumPy adds docstrings`_.
 
 .. _`NumPy adds docstrings`: https://github.com/numpy/numpy/issues/10167
@@ -158,7 +158,7 @@ The world is moving on, we should too. Work in this direction has begun on the
 things that are known to need careful refactoring:
 
 - a single character in python3 is an int, not a byte
-- we use ``str``/``unicode`` to distiguish between different modes of
+- we use ``str``/``unicode`` to distinguish between different modes of
   operation for windows in ``make_win32_traits``.
 
 There are probably more. The branch currently does not pass rpython tests so
@@ -208,7 +208,8 @@ experiments can be done for the general purpose. Examples:
 STM (Software Transactional Memory)
 -----------------------------------
 
-This is work in progress.  Besides the main development path, whose goal is
+This was an experiment that we stopped developing.  Besides the main
+development path, whose goal is
 to make a (relatively fast) version of pypy which includes STM, there are
 independent topics that can already be experimented with on the existing,
 JIT-less pypy-stm version:
@@ -254,24 +255,15 @@ Interfacing with C
 ------------------
 
 While we could make ``cpyext`` faster_, we would also like to explore other
-ideas. It seems cffi is only appropriate for small to medium-sized extensions,
-and it is hard to imagine NumPy abandoning the C-API. Here are a few ideas:
+ideas. While cffi is appropriate for small to medium-sized extensions, HPy
+seems to be the way forward for Python C-extensions. Here are a few ideas:
+* Help `HPy` and port projects to it
 * Extend Cython to have a backend that can be understood by the JIT
 * Collaborate with C-extension authors to ensure full PyPy support (see below)
 * Put PyPy compatible packages on PyPI and in conda
 
-
-.. _faster: https://morepypy.blogspot.com/2018/09#next-steps
-
-Support more platforms
-----------------------
-
-We have a plan for a `Windows 64`_ port. There is progress on the ``win64``
-branch. Help is needed to continue the work. Stage I is complete: we now have
-a 64-bit PyPy2.7 on windows. But it is missing cpyext and other tidbits to
-enable releasing it.
-
-.. _`Windows 64`: windows.html#what-is-missing-for-a-full-64-bit-translation
+.. _faster: https://www.pypy.org/posts/2018/09/inside-cpyext-why-emulating-cpython-c-8083064623681286567.html
+.. _HPy: https://hpyproject/hpy/
 
 ======================================
 Make more python modules pypy-friendly
@@ -314,10 +306,4 @@ good work that needs to be finished:
 
 **pygame** https://github.com/CTPUG/pygame_cffi
 
-    Status: see blog post <https://morepypy.blogspot.com/2014/03/pygamecffi-pygame-on-pypy.html>
-
-    TODO: see the end of the blog post
-
-Work has begun on HPy_ to enable a faster C-API.
-
-.. _HPy: https://hpy.readthedocs.io/en/latest/
+    Status: Last release was in 2017

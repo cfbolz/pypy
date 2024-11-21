@@ -5,7 +5,6 @@ from rpython.rtyper.lltypesystem import lltype
 from rpython.rtyper.lltypesystem.lltype import Void, Bool, LowLevelType, Ptr
 from rpython.tool.pairtype import pairtype, extendabletype, pair
 
-
 # initialization states for Repr instances
 
 class setupstate(object):
@@ -276,10 +275,10 @@ class __extend__(annmodel.SomeIterator):
     # NOTE: SomeIterator is for iterators over any container, not just list
     def rtyper_makerepr(self, rtyper):
         r_container = rtyper.getrepr(self.s_container)
-        if self.variant == ("enumerate",):
+        if self.variant and self.variant[0] == "enumerate":
             from rpython.rtyper.rrange import EnumerateIteratorRepr
             r_baseiter = r_container.make_iterator_repr()
-            return EnumerateIteratorRepr(r_baseiter)
+            return EnumerateIteratorRepr(r_baseiter, self.variant[1])
         return r_container.make_iterator_repr(*self.variant)
 
     def rtyper_makekey(self):
@@ -415,8 +414,14 @@ def getgcflavor(classdef):
     alloc_flavor = classdesc.get_param('_alloc_flavor_', default='gc')
     return alloc_flavor
 
-def externalvsinternal(rtyper, item_repr): # -> external_item_repr, (internal_)item_repr
+def externalvsinternal(rtyper, item_repr, gcref=False): # -> external_item_repr, (internal_)item_repr
     from rpython.rtyper import rclass
+    from rpython.rtyper.lltypesystem import rgcref
+    if rtyper is None or rtyper.annotator.translator.config.translation.gc == "ref":
+        gcref = False # refcounting GC cannot deal with gcrefs
+    if (gcref and isinstance(item_repr.lowleveltype, Ptr) and
+            item_repr.lowleveltype.TO._gckind == 'gc'):
+        return item_repr, rgcref.GCRefRepr.make(item_repr, rtyper.gcrefreprcache)
     if (isinstance(item_repr, rclass.InstanceRepr) and
         getattr(item_repr, 'gcflavor', 'gc') == 'gc'):
         return item_repr, rclass.getinstancerepr(rtyper, None)

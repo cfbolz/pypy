@@ -135,36 +135,37 @@ def expat_external(*a, **kw):
     return rffi.llexternal(*a, **kw)
 
 INTERNED_CCHARP = "INTERNED"
+CONST_CCHARPP = lltype.Ptr(lltype.Array(rffi.CONST_CCHARP, hints={'nolength': True}))
 
 HANDLERS = dict(
-    StartElementHandler = [INTERNED_CCHARP, rffi.CCHARPP],
+    StartElementHandler = [INTERNED_CCHARP, CONST_CCHARPP],
     EndElementHandler = [INTERNED_CCHARP],
     ProcessingInstructionHandler = [INTERNED_CCHARP, INTERNED_CCHARP],
-    CharacterDataHandler = [rffi.CCHARP, rffi.INT],
+    CharacterDataHandler = [rffi.CCHARP, rffi.INT_real],
     UnparsedEntityDeclHandler = [INTERNED_CCHARP] * 5,
     NotationDeclHandler = [INTERNED_CCHARP] * 4,
     StartNamespaceDeclHandler = [INTERNED_CCHARP, INTERNED_CCHARP],
     EndNamespaceDeclHandler = [INTERNED_CCHARP],
-    CommentHandler = [rffi.CCHARP],
+    CommentHandler = [INTERNED_CCHARP],
     StartCdataSectionHandler = [],
     EndCdataSectionHandler = [],
-    DefaultHandler = [rffi.CCHARP, rffi.INT],
-    DefaultHandlerExpand = [rffi.CCHARP, rffi.INT],
+    DefaultHandler = [INTERNED_CCHARP, rffi.INT_real],
+    DefaultHandlerExpand = [INTERNED_CCHARP, rffi.INT_real],
     NotStandaloneHandler = [],
-    ExternalEntityRefHandler = [rffi.CCHARP] + [INTERNED_CCHARP] * 3,
+    ExternalEntityRefHandler = [INTERNED_CCHARP] * 4,
     StartDoctypeDeclHandler = [INTERNED_CCHARP, INTERNED_CCHARP,
-                               INTERNED_CCHARP, rffi.INT],
+                               INTERNED_CCHARP, rffi.INT_real],
     EndDoctypeDeclHandler = [],
-    EntityDeclHandler = [INTERNED_CCHARP, rffi.INT, rffi.CCHARP, rffi.INT,
-                         INTERNED_CCHARP, INTERNED_CCHARP, INTERNED_CCHARP,
-                         INTERNED_CCHARP],
-    XmlDeclHandler = [rffi.CCHARP, rffi.CCHARP, rffi.INT],
+    EntityDeclHandler = [INTERNED_CCHARP, rffi.INT_real, INTERNED_CCHARP,
+                         rffi.INT_real, INTERNED_CCHARP, INTERNED_CCHARP,
+                         INTERNED_CCHARP, INTERNED_CCHARP],
+    XmlDeclHandler = [INTERNED_CCHARP, INTERNED_CCHARP, rffi.INT_real],
     ElementDeclHandler = [INTERNED_CCHARP, lltype.Ptr(XML_Content)],
     AttlistDeclHandler = [INTERNED_CCHARP, INTERNED_CCHARP,
-                          rffi.CCHARP, rffi.CCHARP, rffi.INT],
+                          INTERNED_CCHARP, INTERNED_CCHARP, rffi.INT_real],
     )
 if XML_COMBINED_VERSION >= 19504:
-    HANDLERS['SkippedEntityHandler'] = [INTERNED_CCHARP, rffi.INT]
+    HANDLERS['SkippedEntityHandler'] = [INTERNED_CCHARP, rffi.INT_real]
 NB_HANDLERS = len(HANDLERS)
 
 class Storage:
@@ -224,13 +225,14 @@ for index, (name, params) in enumerate(HANDLERS.items()):
                 'w_arg%d = parser.w_convert_attributes(space, arg%d)' % (i, i))
         elif name in ["CharacterDataHandler", "DefaultHandlerExpand", "DefaultHandler"] and i == 0:
             converters.append(
-                'w_arg%d = parser.w_convert_charp_n(space, arg%d, arg%d)' % (i, i, i+1))
+                'w_arg%d = parser.w_convert_interned_n(space, arg%d, arg%d)' % (i, i, i+1))
             del warg_names[i+1]
+            ARG = rffi.CONST_CCHARP
         elif name in ["EntityDeclHandler"] and i == 2:
             converters.append(
-                'w_arg%d = parser.w_convert_charp_n(space, arg%d, arg%d)' % (i, i, i+1))
+                'w_arg%d = parser.w_convert_interned_n(space, arg%d, arg%d)' % (i, i, i+1))
             del warg_names[i+1]
-
+            ARG = rffi.CONST_CCHARP
         # the standard conversions
         elif ARG == rffi.CCHARP:
             converters.append(
@@ -238,13 +240,15 @@ for index, (name, params) in enumerate(HANDLERS.items()):
         elif ARG == INTERNED_CCHARP:
             converters.append(
                 'w_arg%d = parser.w_convert_interned(space, arg%d)' % (i, i))
-            ARG = rffi.CCHARP
+            ARG = rffi.CONST_CCHARP
         elif ARG == lltype.Ptr(XML_Content):
             converters.append(
                 'w_arg%d = parser.w_convert_model(space, arg%d)' % (i, i))
             converters.append(
                 'XML_FreeContentModel(parser.itself, arg%d)' % (i,))
         elif ARG == rffi.INT:
+            converters.append("w_arg%d = space.newint(arg%d)" % (i, i))
+        elif ARG == rffi.INT_real:
             converters.append("w_arg%d = space.newint(arg%d)" % (i, i))
         else:
             assert 0, "missing conversion case"
@@ -256,9 +260,9 @@ for index, (name, params) in enumerate(HANDLERS.items()):
 
     if name in ['ExternalEntityRefHandler',
                 'NotStandaloneHandler']:
-        result_type = rffi.INT
-        result_converter = "rffi.cast(rffi.INT, space.int_w(w_result))"
-        result_error = "rffi.cast(rffi.INT, 0)"
+        result_type = rffi.INT_real
+        result_converter = "rffi.cast(rffi.INT_real, space.int_w(w_result))"
+        result_error = "rffi.cast(rffi.INT_real, 0)"
     else:
         result_type = lltype.Void
         result_converter = "None"
@@ -324,7 +328,7 @@ def UnknownEncodingHandlerData_callback(ll_userdata, name, info):
     space = userdata.space
     parser = userdata.parser()
 
-    name = rffi.charp2str(name)
+    name = rffi.constcharp2str(name)
 
     try:
         parser.UnknownEncodingHandler(space, name, info)
@@ -335,9 +339,10 @@ def UnknownEncodingHandlerData_callback(ll_userdata, name, info):
         result = 0
     else:
         result = 1
-    return rffi.cast(rffi.INT, result)
+    return rffi.cast(rffi.INT_real, result)
+
 callback_type = lltype.Ptr(lltype.FuncType(
-    [rffi.VOIDP, rffi.CCHARP, XML_Encoding_Ptr], rffi.INT))
+    [rffi.VOIDP, rffi.CONST_CCHARP, XML_Encoding_Ptr], rffi.INT_real))
 XML_SetUnknownEncodingHandler = expat_external(
     'XML_SetUnknownEncodingHandler',
     [XML_Parser, callback_type, rffi.VOIDP], lltype.Void)
@@ -376,7 +381,7 @@ XML_GetErrorCode = expat_external(
     'XML_GetErrorCode', [XML_Parser], rffi.INT)
 XML_ErrorString = expat_external(
     'XML_ErrorString', [rffi.INT],
-    rffi.CCHARP)
+    rffi.CONST_CCHARP)
 XML_GetCurrentLineNumber = expat_external(
     'XML_GetCurrentLineNumber', [XML_Parser], rffi.INT)
 XML_GetErrorLineNumber = XML_GetCurrentLineNumber
@@ -394,10 +399,10 @@ XML_ExternalEntityParserCreate = expat_external(
     XML_Parser)
 
 XML_ExpatVersion = expat_external(
-    'XML_ExpatVersion', [], rffi.CCHARP)
+    'XML_ExpatVersion', [], rffi.CONST_CCHARP)
 
 def get_expat_version(space):
-    return space.newtext(rffi.charp2str(XML_ExpatVersion()))
+    return space.newtext(rffi.constcharp2str(XML_ExpatVersion()))
 
 def get_expat_version_info(space):
     return space.newtuple([
@@ -498,7 +503,7 @@ getting the advantage of providing document type information to the parser.
     def w_convert_interned(self, space, data):
         if not data:
             return space.w_None
-        w_data = self.w_convert_charp(space, data)
+        w_data = self.w_convert(space, rffi.constcharp2str(data))
         if not self.w_intern:
             return w_data
 
@@ -517,6 +522,13 @@ getting the advantage of providing document type information to the parser.
         else:
             return space.w_None
 
+    def w_convert_interned_n(self, space, data, length):
+        ll_length = rffi.cast(lltype.Signed, length)
+        if data:
+            return self.w_convert(space, rffi.constcharpsize2str(data, ll_length))
+        else:
+            return space.w_None
+
     def w_convert_attributes(self, space, attrs):
         if self.specified_attributes:
             maxindex = XML_GetSpecifiedAttributeCount(self.itself)
@@ -527,15 +539,15 @@ getting the advantage of providing document type information to the parser.
 
         if self.ordered_attributes:
             w_attrs = space.newlist([
-                self.w_convert_charp(space, attrs[i])
+                self.w_convert_interned(space, attrs[i])
                 for i in range(maxindex)])
         else:
             w_attrs = space.newdict()
             for i in range(0, maxindex, 2):
                 space.setitem(
                     w_attrs,
-                    self.w_convert_charp(space, attrs[i]),
-                    self.w_convert_charp(space, attrs[i + 1]))
+                    self.w_convert_interned(space, attrs[i]),
+                    self.w_convert_interned(space, attrs[i + 1]))
 
         return w_attrs
 
@@ -707,7 +719,7 @@ information passed to the ExternalEntityRefHandler."""
     # Error management
 
     def set_error(self, space, code):
-        err = rffi.charp2strn(XML_ErrorString(code), 200)
+        err = rffi.constcharp2str(XML_ErrorString(code))
         lineno = XML_GetCurrentLineNumber(self.itself)
         colno = XML_GetCurrentColumnNumber(self.itself)
         msg = "%s: line %d, column %d" % (err, lineno, colno)
@@ -864,5 +876,8 @@ Return a new XML parser object."""
 def ErrorString(space, code):
     """ErrorString(errno) -> string
 Returns string error for given number."""
-    return space.newtext(rffi.charp2str(XML_ErrorString(code)))
+    cstr = XML_ErrorString(code)
+    if not cstr:
+        return space.w_None
+    return space.newtext(rffi.constcharp2str(cstr))
 

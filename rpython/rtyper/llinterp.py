@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import cStringIO
 import os
 import sys
@@ -569,6 +571,9 @@ class LLFrame(object):
         pass
 
     def op_jit_record_exact_class(self, *args):
+        pass
+
+    def op_jit_record_exact_value(self, *args):
         pass
 
     def op_jit_conditional_call(self, *args):
@@ -1324,7 +1329,7 @@ class Tracer(object):
         Tracer.Counter += 1
         filename = 'llinterp_trace_%d.html' % n
         self.file = udir.join(filename).open('w')
-        print >> self.file, self.HEADER
+        print(self.HEADER, file=self.file)
 
         linkname = str(udir.join('llinterp_trace.html'))
         try:
@@ -1344,7 +1349,7 @@ class Tracer(object):
     def stop(self):
         # end of a dump file
         if self.file:
-            print >> self.file, self.FOOTER % (self.latest_call_chain[1:])
+            print(self.FOOTER % (self.latest_call_chain[1:]), file=self.file)
             self.file.close()
             self.file = None
 

@@ -2,8 +2,7 @@ from rpython.jit.metainterp import jitprof, resume, compile
 from rpython.jit.metainterp.executor import execute_nonspec_const
 from rpython.jit.metainterp.history import (
     Const, ConstInt, CONST_NULL, new_ref_dict)
-from rpython.jit.metainterp.optimizeopt.intutils import (
-    IntBound, ConstIntBound, MININT, MAXINT, IntUnbounded)
+from rpython.jit.metainterp.optimizeopt.intutils import IntBound
 from rpython.jit.metainterp.optimizeopt.util import (
     make_dispatcher_method, get_box_replacement)
 from rpython.jit.metainterp.optimizeopt.bridgeopt import (
@@ -14,6 +13,7 @@ from .info import getrawptrinfo, getptrinfo
 from rpython.jit.metainterp.optimizeopt import info
 from rpython.jit.metainterp.optimize import InvalidLoop
 from rpython.rlib.objectmodel import specialize, we_are_translated
+from rpython.rlib.debug import have_debug_prints_for
 from rpython.rtyper import rclass
 from rpython.rtyper.lltypesystem import llmemory
 from rpython.jit.metainterp.optimize import SpeculativeError
@@ -52,6 +52,11 @@ class OptimizationResult(object):
     def callback(self):
         self.opt.propagate_postprocess(self.op)
 
+PASS_OP_ON = OptimizationResult(None, None)
+
+@specialize.memo()
+def have_postprocess(cls):
+    return cls.propagate_postprocess.im_func is not Optimization.propagate_postprocess.im_func
 
 class Optimization(object):
     next_optimization = None
@@ -66,10 +71,20 @@ class Optimization(object):
     def propagate_postprocess(self, op):
         pass
 
+    def have_postprocess(self):
+        return have_postprocess(self.__class__)
+
+    def have_postprocess_op(self, opnum):
+        # default implementation, usually overridden
+        return self.have_postprocess()
+
     def emit_operation(self, op):
         assert False, "This should never be called."
 
     def emit(self, op):
+        if not self.have_postprocess_op(op.getopnum()):
+            self.last_emitted_operation = op
+            return PASS_OP_ON # no allocation
         return self.emit_result(OptimizationResult(self, op))
 
     def emit_result(self, opt_result):
@@ -85,15 +100,15 @@ class Optimization(object):
         assert op.type == 'i'
         op = get_box_replacement(op)
         if isinstance(op, ConstInt):
-            return ConstIntBound(op.getint())
+            return IntBound.from_constant(op.getint())
         fw = op.get_forwarded()
         if fw is not None:
             if isinstance(fw, IntBound):
                 return fw
             # rare case: fw might be a RawBufferPtrInfo
-            return IntUnbounded()
+            return IntBound.unbounded()
         assert op.type == 'i'
-        intbound = IntBound(MININT, MAXINT)
+        intbound = IntBound.unbounded()
         op.set_forwarded(intbound)
         return intbound
 
@@ -211,7 +226,6 @@ class Optimizer(Optimization):
         self.metainterp_sd = metainterp_sd
         self.jitdriver_sd = jitdriver_sd
         self.cpu = metainterp_sd.cpu
-        self.interned_refs = new_ref_dict()
         self.resumedata_memo = resume.ResumeDataLoopMemo(metainterp_sd)
         self.pendingfields = None # set temporarily to a list, normally by
                                   # heap.py, as we're about to generate a guard
@@ -229,8 +243,17 @@ class Optimizer(Optimization):
 
         self._last_guard_op = None
 
+        self.can_replace_guards = True
+
         self.set_optimizations(optimizations)
         self.setup()
+        if have_debug_prints_for("jit-log-intbounds"):
+            from rpython.jit.metainterp.optimizeopt.intbounds import IntegerAnalysisLogger
+
+            self.log_operations_intbounds = IntegerAnalysisLogger(self)
+        else:
+            self.log_operations_intbounds = None
+
 
     def set_optimizations(self, optimizations):
         if optimizations:
@@ -262,7 +285,11 @@ class Optimizer(Optimization):
     def notice_guard_future_condition(self, op):
         self.patchguardop = op
 
+    def cant_replace_guards(self):
+        return CantReplaceGuards(self)
+
     def replace_guard(self, op, value):
+        assert self.can_replace_guards
         assert isinstance(value, info.NonNullPtrInfo)
         if value.last_guard_pos == -1:
             return
@@ -324,24 +351,28 @@ class Optimizer(Optimization):
                 sb.add_preamble_op(preamble_op)
         if info is not None:
             if op.type == 'i' and info.is_constant():
-                return ConstInt(info.getint())
+                return ConstInt(info.get_constant_int())
             return info.force_box(op, optforce)
         return op
 
-    def as_operation(self, op):
+    def as_operation(self, op, required_opnum=-1):
         # You should never check "isinstance(op, AbstractResOp" directly.
         # Instead, use this helper.
-        if isinstance(op, AbstractResOp) and op in self._emittedoperations:
-            return op
+        if isinstance(op, AbstractResOp):
+            if required_opnum != -1 and op.opnum != required_opnum:
+                return None # fast return if the opnum is wrong
+            if op in self._emittedoperations:
+                return op
         return None
 
     def get_constant_box(self, box):
         box = get_box_replacement(box)
         if isinstance(box, Const):
             return box
-        if (box.type == 'i' and box.get_forwarded() and
-            box.get_forwarded().is_constant()):
-            return ConstInt(box.get_forwarded().getint())
+        if box.type == 'i':
+            info = box.get_forwarded()
+            if isinstance(info, IntBound) and info.is_constant():
+                return ConstInt(info.get_constant_int())
         return None
         #self.ensure_imported(value)
 
@@ -470,8 +501,18 @@ class Optimizer(Optimization):
             return CONST_0
 
     def propagate_all_forward(self, trace, call_pure_results=None, flush=True):
+        from rpython.rlib.debug import debug_start, debug_stop
+        debug_start("jit-log-intbounds")
+        try:
+            return self._propagate_all_forward(trace, call_pure_results, flush)
+        finally:
+            debug_stop("jit-log-intbounds")
+
+    def _propagate_all_forward(self, trace, call_pure_results, flush):
         self.trace = trace
-        deadranges = trace.get_dead_ranges()
+        if self.log_operations_intbounds:
+            self.log_operations_intbounds.log_inputargs(trace.inputargs)
+        #deadranges = trace.get_dead_ranges()
         self.call_pure_results = call_pure_results
         last_op = None
         i = 0
@@ -482,9 +523,18 @@ class Optimizer(Optimization):
                 last_op = op
                 break
             self.send_extra_operation(op)
-            trace.kill_cache_at(deadranges[i + trace.start_index])
+            #trace.kill_cache_at(deadranges[i + trace.start_index])
             if op.type != 'v':
                 i += 1
+                newop = self.get_box_replacement(op)
+                if newop is not op:
+                    trace.replace_last_cached(op, newop)
+            if self.log_operations_intbounds and self._really_emitted_operation is op:
+                # logging the result cannot be done in _emit_operation, because
+                # at that point the postprocess functions have not been called,
+                # so the bounds aren't known yet
+                self.log_operations_intbounds.log_result(op)
+
         # accumulate counters
         if flush:
             self.flush()
@@ -503,17 +553,26 @@ class Optimizer(Optimization):
     def send_extra_operation(self, op, opt=None):
         if opt is None:
             opt = self.first_optimization
-        opt_results = []
+        opt_results = None
         while opt is not None:
             opt_result = opt.propagate_forward(op)
             if opt_result is None:
                 op = None
                 break
-            opt_results.append(opt_result)
-            op = opt_result.op
+            if opt_result is not PASS_OP_ON:
+                if opt_results is None:
+                    opt_results = [opt_result]
+                else:
+                    opt_results.append(opt_result)
+                op = opt_result.op
+            else:
+                op = opt.last_emitted_operation
             opt = opt.next_optimization
-        for opt_result in reversed(opt_results):
-            opt_result.callback()
+        if opt_results is not None:
+            index = len(opt_results) - 1
+            while index >= 0:
+                opt_results[index].callback()
+                index -= 1
 
     def propagate_forward(self, op):
         dispatch_opt(self, op)
@@ -533,7 +592,9 @@ class Optimizer(Optimization):
             if opinfo is not None:
                 assert isinstance(opinfo, IntBound)
                 if opinfo.is_constant():
-                    op.set_forwarded(ConstInt(opinfo.getint()))
+                    #if not we_are_translated():
+                    #    import pdb; pdb.set_trace()
+                    op.set_forwarded(ConstInt(opinfo.get_constant_int()))
 
     @specialize.argtype(0)
     def _emit_operation(self, op):
@@ -560,8 +621,6 @@ class Optimizer(Optimization):
                 return
             else:
                 op = self.emit_guard_operation(op, pendingfields)
-        elif op.can_raise():
-            self.exception_might_have_happened = True
         opnum = op.opnum
         if ((rop.has_no_side_effect(opnum) or rop.is_guard(opnum) or
              rop.is_jit_debug(opnum) or
@@ -572,6 +631,9 @@ class Optimizer(Optimization):
         self._really_emitted_operation = op
         self._newoperations.append(op)
         self._emittedoperations[op] = None
+        if self.log_operations_intbounds:
+            self.log_operations_intbounds.log_op(op)
+
 
     def emit_guard_operation(self, op, pendingfields):
         guard_op = op # self.replace_op_with(op, op.getopnum())
@@ -585,6 +647,12 @@ class Optimizer(Optimization):
         if (opnum in (rop.GUARD_NO_EXCEPTION, rop.GUARD_EXCEPTION) and
                 self._last_guard_op is not None and
                 self._last_guard_op.getopnum() != rop.GUARD_NOT_FORCED):
+            self._last_guard_op = None
+        if opnum == rop.GUARD_ALWAYS_FAILS:
+            # GUARD_ALWAYS_FAILS must never share resume data with a previous
+            # guard. otherwise it's possible that we never make progress and
+            # recompile the same bytecodes again and again. see
+            # test_bug_segmented_trace_makes_no_progress
             self._last_guard_op = None
         #
         if (self._last_guard_op and guard_op.getdescr() is None):
@@ -786,3 +854,17 @@ class Optimizer(Optimization):
 
 dispatch_opt = make_dispatcher_method(Optimizer, 'optimize_',
         default=Optimizer.optimize_default)
+
+
+class CantReplaceGuards(object):
+    def __init__(self, optimizer):
+        self.optimizer = optimizer
+
+    def __enter__(self, *args):
+        self.oldval = self.optimizer.can_replace_guards
+        self.optimizer.can_replace_guards = False
+
+    def __exit__(self, *args):
+        self.optimizer.can_replace_guards = self.oldval
+
+

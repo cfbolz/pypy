@@ -1,12 +1,13 @@
-import py
+import pytest
 
 from rpython.jit.codewriter import heaptracker
-from rpython.jit.codewriter.policy import StopAtXPolicy
 from rpython.jit.metainterp.optimizeopt.test.test_util import LLtypeMixin
 from rpython.jit.metainterp.test.support import LLJitMixin
 from rpython.jit.metainterp.warmspot import get_translator, get_stats
 from rpython.jit.metainterp.resoperation import rop
-from rpython.rlib.jit import JitDriver, hint, dont_look_inside, promote, virtual_ref
+from rpython.jit.metainterp.jitprof import Profiler
+from rpython.rlib.jit import JitDriver, hint, dont_look_inside, promote, \
+        virtual_ref, Counters
 from rpython.rlib.rarithmetic import intmask
 from rpython.rtyper.annlowlevel import hlstr
 from rpython.rtyper.llannotation import lltype_to_annotation
@@ -542,7 +543,6 @@ class ImplicitVirtualizableTests(object):
         self.check_resops(getfield_gc_r=1, getarrayitem_gc_i=4,
                           getfield_gc_i=1)
 
-    @py.test.mark.xfail
     def test_virtualizable_with_array_huge(self):
         myjitdriver = JitDriver(greens = [], reds = ['n', 'x', 'frame'],
                                 virtualizables = ['frame'])
@@ -573,7 +573,11 @@ class ImplicitVirtualizableTests(object):
                 frame.s -= 1
             return x
 
-        res = self.meta_interp(f, [50, 1], listops=True)
+        res = self.meta_interp(f, [50, 1], listops=True) # must not crash
+
+    @pytest.mark.xfail
+    def test_virtualizable_with_array_huge_should_stop_compiling(self):
+        self.test_virtualizable_with_array_huge()
         # should stop giving up to compile, eventually
         assert get_stats().aborted_count < 6
 
@@ -619,6 +623,7 @@ class ImplicitVirtualizableTests(object):
         class Frame(BaseFrame):
             pass
 
+        @dont_look_inside
         def g(frame):
             return frame.x[1] == 1
 
@@ -633,7 +638,7 @@ class ImplicitVirtualizableTests(object):
                 n -= 1
             return z
 
-        res = self.meta_interp(f, [10], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [10])
         assert res == f(10)
 
 
@@ -648,6 +653,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             result = somewhere_else.top_frame.y     # external read
             debug_print(lltype.Void, '-+-+-+-+- external read:', result)
@@ -665,7 +671,7 @@ class ImplicitVirtualizableTests(object):
                 frame.y += 1
             return frame.x
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123])
         assert res == f(123)
         self.check_aborted_count(2)
         self.check_jitcell_token_count(0)
@@ -685,6 +691,7 @@ class ImplicitVirtualizableTests(object):
             def __init__(self, value):
                 self.value = value
 
+        @dont_look_inside
         def g():
             result = somewhere_else.top_frame.y     # external read
             debug_print(lltype.Void, '-+-+-+-+- external read:', result)
@@ -705,7 +712,7 @@ class ImplicitVirtualizableTests(object):
                 frame.y += 1
             return frame.x
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123])
         assert res == f(123)
         self.check_aborted_count(2)
         self.check_jitcell_token_count(0)
@@ -721,6 +728,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             result = somewhere_else.top_frame.y + 1
             debug_print(lltype.Void, '-+-+-+-+- external write:', result)
@@ -738,7 +746,7 @@ class ImplicitVirtualizableTests(object):
                 frame.x -= frame.y
             return frame.y
 
-        res = self.meta_interp(f, [240], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [240])
         assert res == f(240)
         self.check_aborted_count(3)
         self.check_jitcell_token_count(0)
@@ -754,6 +762,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             somewhere_else.counter += 1
             if somewhere_else.counter == 70:
@@ -777,8 +786,11 @@ class ImplicitVirtualizableTests(object):
                 frame.y += 1
             return frame.x
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123], ProfilerClass=Profiler)
         assert res == f(123)
+        stats = get_stats()
+        assert stats.metainterp_sd.profiler.counters[
+            Counters.FORCE_VIRTUALIZABLES] == 1
 
     def test_external_read_sometimes_with_virtuals(self):
         jitdriver = JitDriver(greens = [], reds = ['frame'],
@@ -794,6 +806,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             somewhere_else.counter += 1
             if somewhere_else.counter == 70:
@@ -822,7 +835,7 @@ class ImplicitVirtualizableTests(object):
                 frame.x -= 1
             return frame.x
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123])
         assert res == f(123)
 
     def test_external_read_sometimes_changing_virtuals(self):
@@ -839,6 +852,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             somewhere_else.counter += 1
             if somewhere_else.counter == 70:
@@ -872,7 +886,7 @@ class ImplicitVirtualizableTests(object):
                 frame.x -= 1
             return frame.x
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123])
         assert res == f(123)
 
     def test_external_read_sometimes_with_exception(self):
@@ -889,6 +903,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             somewhere_else.counter += 1
             if somewhere_else.counter == 70:
@@ -916,7 +931,7 @@ class ImplicitVirtualizableTests(object):
                 pass
             return frame.x
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123])
         assert res == f(123)
 
     def test_external_read_sometimes_dont_compile_guard(self):
@@ -930,6 +945,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             somewhere_else.counter += 1
             if somewhere_else.counter == 70:
@@ -953,7 +969,7 @@ class ImplicitVirtualizableTests(object):
                 frame.y += 1
             return frame.x
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g), repeat=7)
+        res = self.meta_interp(f, [123], repeat=7)
         assert res == f(123)
 
     def test_external_read_sometimes_recursive(self):
@@ -967,6 +983,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g(rec):
             somewhere_else.counter += 1
             if somewhere_else.counter == 70:
@@ -1005,7 +1022,7 @@ class ImplicitVirtualizableTests(object):
             somewhere_else.top_frame = None
             return f(n, True)
 
-        res = self.meta_interp(main, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(main, [123])
         assert res == main(123)
 
     def test_external_write_sometimes(self):
@@ -1019,6 +1036,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             somewhere_else.counter += 1
             if somewhere_else.counter == 70:
@@ -1042,7 +1060,7 @@ class ImplicitVirtualizableTests(object):
                 frame.y += 1
             return frame.y
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123])
         assert res == f(123)
 
     def test_bridge_forces(self):
@@ -1056,6 +1074,7 @@ class ImplicitVirtualizableTests(object):
             pass
         somewhere_else = SomewhereElse()
 
+        @dont_look_inside
         def g():
             n = somewhere_else.top_frame.y + 700
             debug_print(lltype.Void, '-+-+-+-+- external write:', n)
@@ -1076,7 +1095,7 @@ class ImplicitVirtualizableTests(object):
                 frame.y += 1
             return frame.y
 
-        res = self.meta_interp(f, [123], policy=StopAtXPolicy(g))
+        res = self.meta_interp(f, [123])
         assert res == f(123)
 
     def test_promote_index_in_virtualizable_list(self):
@@ -1341,7 +1360,7 @@ class ImplicitVirtualizableTests(object):
 
     def test_blackhole_should_not_reenter(self):
         if not self.basic:
-            py.test.skip("purely frontend test")
+            pytest.skip("purely frontend test")
 
         myjitdriver = JitDriver(greens = [], reds = ['fail', 'frame'],
                                 virtualizables = ['frame'])

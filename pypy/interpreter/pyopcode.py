@@ -877,10 +877,14 @@ class __extend__(pyframe.PyFrame):
 
     def STORE_ATTR(self, nameindex, next_instr):
         "obj.attributename = newvalue"
-        w_attributename = self.getname_w(nameindex)
         w_obj = self.popvalue()
         w_newvalue = self.popvalue()
-        self.space.setattr(w_obj, w_attributename, w_newvalue)
+        if not jit.we_are_jitted():
+            from pypy.objspace.std.mapdict import STORE_ATTR_caching
+            STORE_ATTR_caching(self.getcode(), w_obj, nameindex, w_newvalue)
+        else:
+            w_attributename = self.getname_w(nameindex)
+            self.space.setattr(w_obj, w_attributename, w_newvalue)
 
     def DELETE_ATTR(self, nameindex, next_instr):
         "del obj.attributename"
@@ -889,9 +893,11 @@ class __extend__(pyframe.PyFrame):
         self.space.delattr(w_obj, w_attributename)
 
     def STORE_GLOBAL(self, nameindex, next_instr):
-        varname = self.getname_u(nameindex)
-        w_newvalue = self.popvalue()
-        self.space.setitem_str(self.get_w_globals(), varname, w_newvalue)
+        #varname = self.getname_u(nameindex)
+        #w_newvalue = self.popvalue()
+        #self.space.setitem_str(self.get_w_globals(), varname, w_newvalue)
+        from pypy.objspace.std.celldict import STORE_GLOBAL_cached
+        STORE_GLOBAL_cached(self, nameindex, next_instr)
 
     def DELETE_GLOBAL(self, nameindex, next_instr):
         w_varname = self.getname_w(nameindex)
@@ -905,7 +911,8 @@ class __extend__(pyframe.PyFrame):
             if w_value is not None:
                 self.pushvalue(w_value)
                 return
-        self.LOAD_GLOBAL(nameindex, next_instr)    # fall-back
+        #self.pushvalue(self._load_global(varname))
+        self.LOAD_GLOBAL(nameindex, next_instr)
 
     @always_inline
     def _load_global(self, varname):
@@ -924,7 +931,10 @@ class __extend__(pyframe.PyFrame):
 
     @always_inline
     def LOAD_GLOBAL(self, nameindex, next_instr):
-        self.pushvalue(self._load_global(self.getname_u(nameindex)))
+        #self.pushvalue(self._load_global(self.getname_u(nameindex)))
+        #return
+        from pypy.objspace.std.celldict import LOAD_GLOBAL_cached
+        LOAD_GLOBAL_cached(self, nameindex, next_instr)
 
     def DELETE_FAST(self, varindex, next_instr):
         if self.locals_cells_stack_w[varindex] is None:

@@ -1,6 +1,6 @@
 import sys
 from rpython.rlib import rsocket, rweaklist
-from rpython.rlib.rarithmetic import intmask
+from rpython.rlib.rarithmetic import widen
 from rpython.rlib.rsocket import (
     RSocket, AF_INET, SOCK_STREAM, SocketError, SocketErrorWithErrno,
     RSocketError
@@ -19,8 +19,8 @@ from pypy.interpreter.typedef import (
 # XXX Hack to separate rpython and pypy
 def addr_as_object(addr, fd, space):
     if isinstance(addr, rsocket.INETAddress):
-        return space.newtuple([space.newtext(addr.get_host()),
-                               space.newint(addr.get_port())])
+        return space.newtuple2(space.newtext(addr.get_host()),
+                               space.newint(addr.get_port()))
     elif isinstance(addr, rsocket.INET6Address):
         return space.newtuple([space.newtext(addr.get_host()),
                                space.newint(addr.get_port()),
@@ -35,8 +35,8 @@ def addr_as_object(addr, fd, space):
     elif rsocket.HAS_AF_UNIX and isinstance(addr, rsocket.UNIXAddress):
         return space.newtext(addr.get_path())
     elif rsocket.HAS_AF_NETLINK and isinstance(addr, rsocket.NETLINKAddress):
-        return space.newtuple([space.newint(addr.get_pid()),
-                               space.newint(addr.get_groups())])
+        return space.newtuple2(space.newint(addr.get_pid()),
+                               space.newint(addr.get_groups()))
     # If we don't know the address family, don't raise an
     # exception -- return it as a tuple.
     from rpython.rlib import _rsocket_rffi as _c
@@ -45,8 +45,8 @@ def addr_as_object(addr, fd, space):
     datalen = addr.addrlen - rsocket.offsetof(_c.sockaddr, 'c_sa_data')
     rawdata = ''.join([a.c_sa_data[i] for i in range(datalen)])
     addr.unlock()
-    return space.newtuple([space.newint(family),
-                           space.newtext(rawdata)])
+    return space.newtuple2(space.newint(family),
+                           space.newtext(rawdata))
 
 # XXX Hack to seperate rpython and pypy
 # XXX a bit of code duplication
@@ -120,7 +120,7 @@ def addr_from_object(family, fd, space, w_address):
         else:                 pkttype = 0
         if len(pieces_w) > 3: hatype = space.int_w(pieces_w[3])
         else:                 hatype = 0
-        if len(pieces_w) > 4: haddr = space.text_w(pieces_w[4])
+        if len(pieces_w) > 4: haddr = space.bytes_w(pieces_w[4])
         else:                 haddr = ""
         if len(haddr) > 8:
             raise oefmt(space.w_ValueError,
@@ -162,7 +162,7 @@ class W_Socket(W_Root):
             self.register_finalizer(space)
 
     def _finalize_(self):
-        is_open = self.sock.fd >= 0
+        is_open = widen(self.sock.fd) != rsocket.INVALID_SOCKET
         if is_open and self.space.sys.track_resources:
             w_repr = self.space.repr(self)
             str_repr = self.space.text_w(w_repr)
@@ -179,7 +179,7 @@ class W_Socket(W_Root):
         return space.newint(self.sock.family)
 
     def descr_repr(self, space):
-        fd = intmask(self.sock.fd)  # Force to signed type even on Windows.
+        fd = widen(self.sock.fd)  # Force to signed type even on Windows.
         return space.newtext("<socket object, fd=%d, family=%d,"
                           " type=%d, protocol=%d>" %
                           (fd, self.sock.family,
@@ -196,8 +196,8 @@ class W_Socket(W_Root):
             fd, addr = self.sock.accept()
             sock = rsocket.make_socket(
                 fd, self.sock.family, self.sock.type, self.sock.proto)
-            return space.newtuple([W_Socket(space, sock),
-                                   addr_as_object(addr, sock.fd, space)])
+            return space.newtuple2(W_Socket(space, sock),
+                                   addr_as_object(addr, sock.fd, space))
         except SocketError as e:
             raise converted_error(space, e)
 
@@ -208,7 +208,7 @@ class W_Socket(W_Root):
     # convert an app-level object into an Address
     # based on the current socket's family
     def addr_from_object(self, space, w_address):
-        fd = intmask(self.sock.fd)
+        fd = widen(self.sock.fd)
         return addr_from_object(self.sock.family, fd, space, w_address)
 
     def bind_w(self, space, w_addr):
@@ -271,7 +271,7 @@ class W_Socket(W_Root):
 
         Return the integer file descriptor of the socket.
         """
-        return space.newint(intmask(self.sock.fd))
+        return space.newint(widen(self.sock.fd))
 
     def getpeername_w(self, space):
         """getpeername() -> address info
@@ -378,7 +378,7 @@ class W_Socket(W_Root):
                 w_addr = addr_as_object(addr, self.sock.fd, space)
             else:
                 w_addr = space.w_None
-            return space.newtuple([space.newbytes(data), w_addr])
+            return space.newtuple2(space.newbytes(data), w_addr)
         except SocketError as e:
             raise converted_error(space, e)
 
@@ -526,7 +526,7 @@ class W_Socket(W_Root):
                 w_addr = addr_as_object(addr, self.sock.fd, space)
             else:
                 w_addr = space.w_None
-            return space.newtuple([space.newint(readlgt), w_addr])
+            return space.newtuple2(space.newint(readlgt), w_addr)
         except SocketError as e:
             raise converted_error(space, e)
 

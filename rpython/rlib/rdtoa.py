@@ -44,7 +44,7 @@ dg_strtod = rffi.llexternal(
 
 dg_dtoa = rffi.llexternal(
     '_PyPy_dg_dtoa', [rffi.DOUBLE, rffi.INT, rffi.INT,
-                    rffi.INTP, rffi.INTP, rffi.CCHARPP], rffi.CCHARP,
+                    rffi.INT_realP, rffi.INT_realP, rffi.CCHARPP], rffi.CCHARP,
     compilation_info=eci, sandboxsafe=True)
 
 dg_freedtoa = rffi.llexternal(
@@ -191,12 +191,12 @@ def format_number(digits, buflen, sign, decpt, code, precision, flags, upper):
 
     # 2. Digits, with included decimal point
     if 0 < decpt <= buflen:
-        builder.append(rffi.charpsize2str(digits, decpt - 0))
+        builder.append_charpsize(digits, decpt - 0)
         builder.append('.')
         ptr = rffi.ptradd(digits, decpt)
-        builder.append(rffi.charpsize2str(ptr, buflen - decpt))
+        builder.append_charpsize(ptr, buflen - decpt)
     else:
-        builder.append(rffi.charpsize2str(digits, buflen))
+        builder.append_charpsize(digits, buflen)
 
     # 3. And zeros on the right
     if buflen < decpt:
@@ -213,6 +213,15 @@ def format_number(digits, buflen, sign, decpt, code, precision, flags, upper):
         last = len(s) - 1
         if last >= 0 and s[last] == '.':
             s = s[:last]
+
+    # remove the - for negative zeros if DTSF_NO_NEG_0 is given
+    if flags & rfloat.DTSF_NO_NEG_0 and s and s[0] == '-':
+        for index in range(1, len(s)):
+            c = s[index]
+            if c != '.' and c != '0':
+                break
+        else:
+            s = s[1:]
 
     # Now that we've done zero padding, add an exponent if needed.
     if use_exp:
@@ -236,15 +245,16 @@ def format_number(digits, buflen, sign, decpt, code, precision, flags, upper):
 
     return s
 
+@jit.elidable
 def dtoa(value, code='r', mode=0, precision=0, flags=0,
          special_strings=lower_special_strings, upper=False):
     if precision > _INT_LIMIT:
         raise MemoryError
     if objectmodel.revdb_flag_io_disabled():
         return _revdb_dtoa(value)
-    decpt_ptr = lltype.malloc(rffi.INTP.TO, 1, flavor='raw')
+    decpt_ptr = lltype.malloc(rffi.INT_realP.TO, 1, flavor='raw')
     try:
-        sign_ptr = lltype.malloc(rffi.INTP.TO, 1, flavor='raw')
+        sign_ptr = lltype.malloc(rffi.INT_realP.TO, 1, flavor='raw')
         try:
             end_ptr = lltype.malloc(rffi.CCHARPP.TO, 1, flavor='raw')
             try:

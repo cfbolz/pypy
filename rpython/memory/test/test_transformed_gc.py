@@ -52,6 +52,12 @@ class GCTest(object):
     taggedpointers = False
     gchooks = None
 
+    def setup(self):
+        # This snippet is an attempt to clean the WeakKeyDict
+        # rpython.memory.gcheader.header2obj between tests
+        import gc
+        gc.collect()
+
     def setup_class(cls):
         cls.marker = lltype.malloc(rffi.CArray(lltype.Signed), 1,
                                    flavor='raw', zero=True)
@@ -475,8 +481,8 @@ class GenericGCTests(GCTest):
         S = lltype.GcStruct('S', ('x', llmemory.Address))
         T = lltype.GcStruct('T', ('z', lltype.Signed))
         offset_of_x = llmemory.offsetof(S, 'x')
-        def customtrace(gc, obj, callback, arg):
-            gc._trace_callback(callback, arg, obj + offset_of_x)
+        def customtrace(gc, obj, callback, arg1, arg2):
+            gc._trace_callback(callback, arg1, arg2, obj + offset_of_x)
         lambda_customtrace = lambda: customtrace
 
         #
@@ -1426,11 +1432,11 @@ class MyGcHooks(GcHooks):
 
     def on_gc_collect_step(self, duration, oldstate, newstate):
         self.stats.steps += 1
-        
+
     def on_gc_collect(self, num_major_collects,
                       arenas_count_before, arenas_count_after,
                       arenas_bytes, rawmalloc_bytes_before,
-                      rawmalloc_bytes_after):
+                      rawmalloc_bytes_after, pinned_objects):
         self.stats.collects += 1
 
 

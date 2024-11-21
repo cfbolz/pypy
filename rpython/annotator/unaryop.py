@@ -62,7 +62,7 @@ def s_isinstance(annotator, s_obj, s_type, variables):
                                             # is quite border case for RPython
         r.const = False
     for v in variables:
-        assert v.annotation == s_obj
+        assert annotator.binding(v) == s_obj
     knowntypedata = defaultdict(dict)
     if not hasattr(typ, '_freeze_') and isinstance(s_type, SomePBC):
         add_knowntypedata(knowntypedata, True, variables, bk.valueoftype(typ))
@@ -179,6 +179,9 @@ class __extend__(SomeObject):
         return SomeString()
 
     def hex(self):
+        return SomeString()
+
+    def bin(self):
         return SomeString()
 
     def oct(self):
@@ -810,7 +813,7 @@ class __extend__(SomeIterator):
         position = getbookkeeper().position_key
         if s_None.contains(self.s_container):
             return s_ImpossibleValue     # so far
-        if self.variant == ("enumerate",):
+        if self.variant and self.variant[0] == "enumerate":
             s_item = self.s_container.getanyitem(position)
             return SomeTuple((SomeInteger(nonneg=True), s_item))
         variant = self.variant

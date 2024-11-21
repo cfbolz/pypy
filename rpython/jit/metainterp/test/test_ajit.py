@@ -2,7 +2,7 @@ import math
 import sys
 
 import py
-import weakref
+import pytest
 
 from rpython.rlib import rgc
 from rpython.jit.codewriter.policy import StopAtXPolicy
@@ -14,7 +14,8 @@ from rpython.rlib import rerased
 from rpython.rlib.jit import (JitDriver, we_are_jitted, hint, dont_look_inside,
     loop_invariant, elidable, promote, jit_debug, assert_green,
     AssertGreenFailed, unroll_safe, current_trace_length, look_inside_iff,
-    isconstant, isvirtual, set_param, record_exact_class)
+    isconstant, isvirtual, set_param, record_exact_class, record_known_result,
+    record_exact_value, loop_unrolling_heuristic)
 from rpython.rlib.longlong2float import float2longlong, longlong2float
 from rpython.rlib.rarithmetic import ovfcheck, is_valid_int, int_force_ge_zero
 from rpython.rtyper.lltypesystem import lltype, rffi
@@ -1495,6 +1496,24 @@ class BasicTests:
         assert res == 9 + 8 + 7 + 6 + 5 + 4 + 3 + 2 + 1 + 0
         self.check_jitcell_token_count(0)
 
+    def test_set_param_pureops_historylength(self):
+        myjitdriver = JitDriver(greens=[], reds='auto')
+        def g(i):
+            set_param(myjitdriver, 'pureop_historylength', i)
+            x1 = x2 = x3 = x4 = 0
+            while x1 < 100:
+                myjitdriver.jit_merge_point()
+                a = x1 + 1
+                x2 += 1
+                x3 += 1
+                x4 += 1
+                x1 += 1 # should or should not reuse a
+            return a
+        res = self.meta_interp(g, [4])
+        self.check_resops(int_add=10)
+        res = self.meta_interp(g, [16])
+        self.check_resops(int_add=8)
+
     def test_dont_look_inside(self):
         @dont_look_inside
         def g(a, b):
@@ -2870,7 +2889,6 @@ class BasicTests:
         self.check_target_token_count(5)
 
     def test_max_unroll_loops(self):
-        from rpython.jit.metainterp.optimize import InvalidLoop
         from rpython.jit.metainterp import optimizeopt
         myjitdriver = JitDriver(greens = [], reds = ['n', 'i'])
         #
@@ -3237,6 +3255,105 @@ class BasicTests:
         assert res == -35
         res = self.interp_operations(f, [127 - 256 * 29])
         assert res == 127
+
+    def test_bug_inline_short_preamble_can_be_inconsistent_in_optimizeopt(self):
+        myjitdriver = JitDriver(greens = [], reds = "auto")
+        class Str(object):
+            _immutable_fields_ = ['s']
+            def __init__(self, s):
+                self.s = s
+
+        empty = Str("")
+        space = Str(" ")
+
+        def f(a, b):
+            line = " " * a + " a" * b
+            token = ""
+            res = []
+            index = 0
+            while True:
+                myjitdriver.jit_merge_point()
+                if index >= len(line):
+                    break
+                char = line[index]
+                index += 1
+                if char == space.s:
+                    if token != empty.s:
+                        res.append(token)
+                        token = empty.s
+                else:
+                    token += char
+            return len(res)
+        args = [50, 50]
+        res = self.meta_interp(f, args)
+        assert res == f(*args)
+
+    def test_tail_recursion_elimination_tracing(self):
+        myjitdriver = JitDriver(greens=[], reds='auto')
+        def g6(i):
+            return g5(i)
+        def g5(i):
+            return g4(i)
+        def g4(i):
+            return g3(i)
+        def g3(i):
+            return g2(i)
+        def g2(i):
+            return g1(i)
+        def g1(i):
+            if i & 1:
+                return i + 1
+            return i + 3
+        def g(i):
+            x = i
+            while x < 100:
+                myjitdriver.jit_merge_point()
+                x = g6(x)
+            return x
+        res = self.meta_interp(g, [4])
+        # used to be 29
+        assert len(get_stats().loops[0].operations[3]._descr.rd_numb.code) == 14
+
+    def test_tail_recursion_elimination_tracing_void(self):
+        myjitdriver = JitDriver(greens=[], reds='auto')
+        def g6():
+            return g5()
+        def g5():
+            return g4()
+        def g4():
+            return g3()
+        def g3():
+            return g2()
+        def g2():
+            return g1()
+        def g1():
+            if a.x & 1:
+                a.x += 1
+            else:
+                a.x += 3
+        class A:
+            pass
+        a = A()
+        a.x = 12
+        def g(i):
+            a.x = i
+            while a.x < 100:
+                myjitdriver.jit_merge_point()
+                g6()
+            return a.x
+        res = self.meta_interp(g, [4])
+        assert res == g(4)
+        # used to be 22
+        assert len(get_stats().loops[0].operations[4]._descr.rd_numb.code) == 12
+
+    def test_uint_mul_high(self):
+        from rpython.rlib.rarithmetic import uint_mul_high, intmask, r_uint
+        def f(x, y):
+            return intmask(uint_mul_high(r_uint(x), r_uint(y)))
+        res = self.interp_operations(f, [40, 2])
+        assert res == 0
+        self.check_operations_history(uint_mul_high=1)
+
 
 class BaseLLtypeTests(BasicTests):
 
@@ -3836,6 +3953,23 @@ class BaseLLtypeTests(BasicTests):
         assert res == 0
         self.check_resops(call_i=0, call_may_force_i=0, new_array=0)
 
+    def test_loop_unrolling_heuristic_needs_constant_size(self):
+        myjitdriver = JitDriver(greens = [], reds = 'auto')
+        @look_inside_iff(lambda x: loop_unrolling_heuristic(x, len(x)))
+        def g(x):
+            return x[0]
+        def f(n):
+            l = [1] * 1000
+            l.append(1)
+            while n > 0:
+                myjitdriver.jit_merge_point()
+                x = l[:n]
+                n -= g(x)
+                x.append(n)
+            return n
+        res = self.meta_interp(f, [10])
+        assert res == 0
+        self.check_resops(call_i=2, new_array=2)
 
     def test_convert_from_SmallFunctionSetPBCRepr_to_FunctionsPBCRepr(self):
         f1 = lambda n: n+1
@@ -3989,6 +4123,91 @@ class BaseLLtypeTests(BasicTests):
         assert res1 == res2
         # here it works again
         self.check_operations_history(guard_class=0, record_exact_class=1)
+
+    def test_record_known_result(self):
+        @elidable
+        def f(x):
+            return x + 1
+        @elidable
+        def g(x):
+            return x - 1
+
+        def call_f(x):
+            y = f(x)
+            record_known_result(x, g, y)
+            a = g(y)
+            return a
+
+        myjitdriver = JitDriver(greens=[], reds=['x', 'res'])
+        def main(x):
+            res = 0
+            while x > 0:
+                myjitdriver.jit_merge_point(x=x, res=res)
+                res += x
+                x = call_f(x) - 1
+            return res
+        res = self.meta_interp(main, [10], backendopt=True)
+        assert res == main(10)
+        self.check_resops(call_i=2)  # two calls to f, both get removed by the backend
+
+
+    def test_record_exact_value(self):
+        class A(object):
+            _immutable_fields_ = ['x']
+
+        a = A()
+        b = A()
+        a.x = 42
+        b.x = 233
+
+        @dont_look_inside
+        def make(x):
+            if x > 0:
+                return a
+            else:
+                return b
+        def f(x):
+            inst = make(x)
+            if x > 0:
+                record_exact_value(inst, a)
+            else:
+                record_exact_value(inst, b)
+            return inst.x
+        res = self.interp_operations(f, [1])
+        assert res == 42
+        self.check_operations_history(record_exact_value_r=1)
+
+    def test_record_exact_value_int_constant(self):
+        class A:
+            pass
+        def f(x):
+            a = A()
+            if x == 1:
+                a.x = 1
+            else:
+                a.x = x
+            record_exact_value(a.x, 1)
+            return a.x
+        res = self.interp_operations(f, [1])
+        assert res == 1
+        # don't need to record, it's already a Const
+        self.check_operations_history(record_exact_value_i=0)
+
+    def test_record_exact_value_int_constant_bogus(self):
+        class A:
+            pass
+        def f(x):
+            a = A()
+            if x == 1:
+                a.x = 1
+            else:
+                a.x = x
+            record_exact_value(a.x, 12)
+            return a.x
+        # the actual exception is a weird AttributeError, caused by the way
+        # that interp_operations fakes stuff. just check that there is one
+        with py.test.raises(Exception):
+            self.interp_operations(f, [1])
 
     def test_generator(self):
         def g(n):
@@ -4594,6 +4813,7 @@ class TestLLtype(BaseLLtypeTests, LLJitMixin):
                                       guard_class=2,
                                       assert_not_none=2) # before optimization
 
+    @pytest.mark.skipif(sys.platform=='darwin', reason='symbolics comparison breaks the untranslated optimizer')
     def test_call_time_clock(self):
         import time
         def g():

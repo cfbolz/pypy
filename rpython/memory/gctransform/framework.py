@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 from rpython.annotator import model as annmodel
 from rpython.rtyper.llannotation import SomeAddress, SomePtr
 from rpython.rlib import rgc
@@ -96,7 +98,7 @@ def find_initializing_stores(collect_analyzer, graph, entrymap):
         propagate_no_write_barrier_needed(result, target, mallocvars,
                                           collect_analyzer, entrymap)
     #if result:
-    #    print "found %s initializing stores in %s" % (len(result), graph.name)
+    #    print("found %s initializing stores in %s" % (len(result), graph.name))
     return result
 
 def find_clean_setarrayitems(collect_analyzer, graph):
@@ -592,11 +594,11 @@ class BaseFrameworkGCTransformer(GCTransformer):
             [(self.get_type_id(TP), func) for TP, func in custom_trace_funcs])
 
         @specialize.arg(2)
-        def custom_trace_dispatcher(obj, typeid, callback, arg):
+        def custom_trace_dispatcher(obj, typeid, callback, arg1, arg2):
             for type_id_exp, func in custom_trace_funcs_unrolled:
                 if (llop.combine_ushort(lltype.Signed, typeid, 0) ==
                     llop.combine_ushort(lltype.Signed, type_id_exp, 0)):
-                    func(gc, obj, callback, arg)
+                    func(gc, obj, callback, arg1, arg2)
                     return
             else:
                 assert False
@@ -611,10 +613,12 @@ class BaseFrameworkGCTransformer(GCTransformer):
         # detect if one of the custom trace functions uses the GC
         # (it must not!)
         for TP, func in rtyper.custom_trace_funcs:
-            def no_op_callback(obj, arg):
+            if getattr(func, '_skip_collect_analyzer_', False):
+                continue
+            def no_op_callback(obj, arg1, arg2):
                 pass
             def ll_check_no_collect(obj):
-                func(gc, obj, no_op_callback, None)
+                func(gc, obj, no_op_callback, None, None)
             annhelper = annlowlevel.MixLevelHelperAnnotator(rtyper)
             graph1 = annhelper.getgraph(ll_check_no_collect, [SomeAddress()],
                                         annmodel.s_None)
@@ -759,7 +763,7 @@ class BaseFrameworkGCTransformer(GCTransformer):
         func = getattr(graph, 'func', None)
         if func and getattr(func, '_gc_no_collect_', False):
             if self.collect_analyzer.analyze_direct_call(graph):
-                print '!'*79
+                print('!'*79)
                 ca = CollectAnalyzer(self.translator)
                 ca.verbose = True
                 ca.analyze_direct_call(graph)

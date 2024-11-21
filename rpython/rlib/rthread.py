@@ -53,6 +53,9 @@ c_thread_start = llexternal('RPyThreadStart', [CALLBACK], lltype.Signed,
                                               # importantly, reacquire it
                                               # around the callback
 
+c_pthread_kill = llexternal('RPyThread_kill', [lltype.Signed, rffi.INT], rffi.INT,
+                          save_err=rffi.RFFI_SAVE_ERRNO)
+
 TLOCKP = rffi.COpaquePtr('struct RPyOpaque_ThreadLock',
                           compilation_info=eci)
 TLOCKP_SIZE = rffi_platform.sizeof('struct RPyOpaque_ThreadLock', eci)
@@ -83,6 +86,8 @@ c_thread_acquirelock_timed_NOAUTO = llexternal('RPyThreadAcquireLockTimed',
                                          rffi.INT, _nowrapper=True)
 c_thread_releaselock_NOAUTO = c_thread_releaselock
 
+c_get_native_id = llexternal('RPyThread_get_thread_native_id', [],
+                           rffi.ULONG, _nowrapper=True)
 
 def allocate_lock():
     # Add some memory pressure for the size of the lock because it is an
@@ -246,8 +251,8 @@ def allocate_ll_lock():
     # reason it is set to False is that we get it from all app-level
     # lock objects, as well as from the GIL, which exists at shutdown.
     ll_lock = lltype.malloc(TLOCKP.TO, flavor='raw', track_allocation=False)
-    res = c_thread_lock_init(ll_lock)
-    if rffi.cast(lltype.Signed, res) <= 0:
+    res = rffi.cast(lltype.Signed, c_thread_lock_init(ll_lock))
+    if res <= 0:
         lltype.free(ll_lock, flavor='raw', track_allocation=False)
         raise error("out of resources")
     return ll_lock
@@ -421,14 +426,14 @@ class ThreadLocalReference(ThreadLocalField):
         self.get = get
         self.set = set
 
-        def _trace_tlref(gc, obj, callback, arg):
+        def _trace_tlref(gc, obj, callback, arg1, arg2):
             p = llmemory.NULL
             llop.threadlocalref_acquire(lltype.Void)
             while True:
                 p = llop.threadlocalref_enum(llmemory.Address, p)
                 if not p:
                     break
-                gc._trace_callback(callback, arg, p + offset)
+                gc._trace_callback(callback, arg1, arg2, p + offset)
             llop.threadlocalref_release(lltype.Void)
         _lambda_trace_tlref = lambda: _trace_tlref
         # WAAAH obscurity: can't use a name that may be non-unique,
@@ -452,7 +457,7 @@ class ThreadLocalReference(ThreadLocalField):
 
 tlfield_thread_ident = ThreadLocalField(lltype.Signed, "thread_ident",
                                         loop_invariant=True)
-tlfield_p_errno = ThreadLocalField(rffi.CArrayPtr(rffi.INT), "p_errno",
+tlfield_p_errno = ThreadLocalField(rffi.CArrayPtr(rffi.INT_real), "p_errno",
                                    loop_invariant=True)
 tlfield_rpy_errno = ThreadLocalField(rffi.INT, "rpy_errno")
 tlfield_alt_errno = ThreadLocalField(rffi.INT, "alt_errno")

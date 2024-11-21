@@ -32,6 +32,7 @@ class ThreadModule(MixedModule):
     interpleveldefs = {
         '_signals_enter':  'interp_signal.signals_enter',
         '_signals_exit':   'interp_signal.signals_exit',
+        '_raise_in_thread': 'interp_signal._raise_in_thread',
     }
 
 
@@ -97,6 +98,7 @@ class Module(MixedModule):
         'get_hidden_tb'             : 'interp_magic.get_hidden_tb',
         'lookup_special'            : 'interp_magic.lookup_special',
         'do_what_I_mean'            : 'interp_magic.do_what_I_mean',
+        '_internal_crash'           : 'interp_magic._internal_crash',
         'resizelist_hint'           : 'interp_magic.resizelist_hint',
         'newlist_hint'              : 'interp_magic.newlist_hint',
         'add_memory_pressure'       : 'interp_magic.add_memory_pressure',

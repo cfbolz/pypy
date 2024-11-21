@@ -1,4 +1,5 @@
 """Support for OS X."""
+from __future__ import print_function
 
 from rpython.translator.platform import posix
 import os
@@ -8,8 +9,13 @@ import os
 # the @rpath handling used in Darwin._args_for_shared is only availabe
 # since 10.5, so we use that as minimum requirement. Bumped to 10.7
 # to allow the use of thread-local in __thread in C.
+# Bumped to 10.9 2021-11-22 to match CPython,
+# see https://github.com/python/cpython/blob/42205ee51
 #
-DARWIN_VERSION_MIN = '-mmacosx-version-min=10.7'
+# Keep in sync with MACOSX_DEPLOYMENT_TARGET, for pypy see
+# lib_pypy/_sysconfigdata.py
+#
+DARWIN_VERSION_MIN = '-mmacosx-version-min=10.9'
 
 class Darwin(posix.BasePosix):
     name = "darwin"
@@ -32,7 +38,7 @@ class Darwin(posix.BasePosix):
     def get_rpath_flags(self, rel_libdirs):
         # needed for cross compiling on ARM, needs fixing if relevant for darwin
         if len(rel_libdirs) > 0:
-            print 'in get_rpath_flags, rel_libdirs is not fixed up',rel_libdirs
+            print('in get_rpath_flags, rel_libdirs is not fixed up',rel_libdirs)
         return self.rpath_flags
 
     def _args_for_shared(self, args, **kwds):
@@ -58,18 +64,6 @@ class Darwin(posix.BasePosix):
         return self._pkg_config("libffi", "--libs-only-L",
                                 ['/usr/lib'],
                                 check_result_dir=True)
-
-    def include_dirs_for_openssl(self):
-        dirs = self._include_dirs_for_openssl()
-        if 'PYPY_LOCALBASE' in os.environ:
-            return [os.environ['PYPY_LOCALBASE'] + '/include'] + dirs
-        return dirs
-
-    def library_dirs_for_openssl(self):
-        dirs = self._library_dirs_for_openssl()
-        if 'PYPY_LOCALBASE' in os.environ:
-            return [os.environ['PYPY_LOCALBASE'] + '/lib'] + dirs
-        return dirs
 
     def _include_dirs_for_openssl(self):
         return self._pkg_config("openssl", "--cflags-only-I",
@@ -132,3 +126,8 @@ class Darwin_x86_64(Darwin):
     name = "darwin_x86_64"
     link_flags = Darwin.link_flags + ('-arch', 'x86_64')
     cflags = Darwin.cflags + ('-arch', 'x86_64')
+
+class Darwin_arm64(Darwin):
+    name = 'darwin_arm64'
+    link_flags = Darwin.link_flags + ('-arch', 'arm64')
+    cflags = Darwin.cflags + ('-arch', 'arm64')

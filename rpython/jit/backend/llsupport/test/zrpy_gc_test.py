@@ -3,6 +3,7 @@ This is a test that translates a complete JIT together with a GC and runs it.
 It is testing that the GC-dependent aspects basically work, mostly the mallocs
 and the various cases of write barrier.
 """
+from __future__ import print_function
 
 import weakref
 import os, py
@@ -56,7 +57,7 @@ def get_entry(g):
         for r in r_list:
             if r() is None:
                 freed += 1
-        print freed
+        print(freed)
         return 0
 
     return entrypoint
@@ -81,6 +82,7 @@ def compile(f, gc, **kwds):
     from rpython.translator.translator import TranslationContext
     from rpython.jit.metainterp.warmspot import apply_jit
     from rpython.translator.c import genc
+    from rpython.translator.backendopt.all import backend_optimizations
     #
     t = TranslationContext()
     t.config.translation.gc = gc
@@ -106,6 +108,13 @@ def compile(f, gc, **kwds):
             for (obj, attr), oldvalue in old_value.items():
                 setattr(obj, attr, oldvalue)
 
+    backend_optimizations(t,
+                          graphs=t.graphs,
+                          merge_if_blocks=True,
+                          constfold=True,
+                          remove_asserts=True,
+                          really_remove_asserts=True,
+                          replace_we_are_jitted=False)
     cbuilder = genc.CStandaloneBuilder(t, f, t.config)
     cbuilder.generate_source(defines=cbuilder.DEBUG_DEFINES)
     cbuilder.compile()
@@ -146,7 +155,7 @@ class BaseFrameworkTests(object):
             funcs.append((beforefunc, loopfunc, afterfunc))
             assert name not in name_to_func
             name_to_func[name] = len(name_to_func)
-        print name_to_func
+        print(name_to_func)
         def allfuncs(name, n):
             x = X()
             x.foo = 2
@@ -895,7 +904,7 @@ class CompileFrameworkTests(BaseFrameworkTests):
             #
             n -= 1
             return (n, x) + args
-        
+
         return None, fn, None
 
     def test_multiple_pinned(self):

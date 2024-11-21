@@ -1,5 +1,5 @@
 import pytest
-import errno, os, sys
+import errno, os, sys, py
 from rpython.rlib import rsocket
 from rpython.rlib.rsocket import *
 import socket as cpy_socket
@@ -226,6 +226,7 @@ def test_socketpair_recvfrom_into():
     s2.close()
 
 
+@py.test.mark.skipif("sys.platform == 'darwin'")
 def test_simple_tcp(do_recv):
     from rpython.rlib import rthread
     sock = RSocket()
@@ -323,6 +324,7 @@ def test_simple_udp(do_recv):
     s1.close()
     s2.close()
 
+@py.test.mark.skipif("sys.platform == 'darwin'")
 def test_nonblocking(do_recv):
     sock = RSocket()
     sock.setblocking(False)
@@ -340,9 +342,17 @@ def test_nonblocking(do_recv):
 
     addr = INETAddress('127.0.0.1', port)
     assert addr.eq(sock.getsockname())
+    print("listen")
     sock.listen(1)
+    print("listen done")
     with pytest.raises(CSocketError) as err:
-        sock.accept()
+        print("before accept")
+        try:
+            sock.accept()
+        except Exception as e:
+            print(e)
+            raise
+    print("accept raised an err")
     assert err.value.errno in (errno.EAGAIN, errno.EWOULDBLOCK)
 
     s2 = RSocket(AF_INET, SOCK_STREAM)
@@ -412,7 +422,9 @@ def getaddrinfo_pydotorg(i, result):
     found = False
     for family, socktype, protocol, canonname, addr in lst:
         if addr.get_host() in ('138.197.63.241', '104.130.43.121',
-                               '23.253.135.79', '45.55.99.72'):
+                               '23.253.135.79', '45.55.99.72',
+                               '151.101.129.168', '151.101.193.168',
+                               '151.101.64.223'):
             found = True
         elif family == AF_INET:
             print 'pydotorg changed to', addr.get_host()
@@ -448,6 +460,7 @@ def test_connect_ex():
     assert err in (errno.ECONNREFUSED, errno.EADDRNOTAVAIL)
     s.close()
 
+@py.test.mark.skipif("sys.platform == 'darwin'")
 def test_connect_with_timeout_fail():
     s = RSocket()
     s.settimeout(0.1)
@@ -455,12 +468,14 @@ def test_connect_with_timeout_fail():
         s.connect(INETAddress('172.30.172.30', 12345))
     s.close()
 
+@py.test.mark.skipif("sys.platform == 'darwin'")
 def test_connect_with_timeout_succeed():
     s = RSocket()
     s.settimeout(10.0)
     s.connect(INETAddress('python.org', 80))
     s.close()
 
+@py.test.mark.skipif("sys.platform == 'darwin'")
 def test_connect_with_default_timeout_fail():
     rsocket.setdefaulttimeout(0.1)
     s = RSocket()
@@ -624,6 +639,7 @@ class TestTCP:
         with pytest.raises(SocketTimeout):
             self.serv.accept()
 
+    @py.test.mark.skipif("sys.platform == 'darwin'")
     def test_timeout_zero(self):
         self.serv.settimeout(0.0)
         with pytest.raises(SocketError):
@@ -739,6 +755,7 @@ def test_socket_saves_errno(do_recv):
     assert e.value.errno in (errno.EPROTOTYPE, errno.EPROTONOSUPPORT)
 
 @pytest.mark.skipif(fcntl is None, reason="requires fcntl")
+@py.test.mark.skipif("sys.platform == 'darwin'")
 def test_socket_init_non_blocking():
     import fcntl, os
     s = RSocket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK)
@@ -759,3 +776,16 @@ def test_sethostname():
     with pytest.raises(CSocketError) as e:
         sethostname(s)
     assert e.value.errno == errno.EPERM
+
+@pytest.mark.skipif(sys.platform != "linux",
+        reason='this behaviour of MSG_TRUNC is linux specific')
+def test_msg_trunc_weirdness_linux():
+    import socket
+    (a, b) = socketpair(rsocket.AF_UNIX, rsocket.SOCK_DGRAM)
+    a.send(b'abcdefgh')
+    result = b.recv(2, socket.MSG_TRUNC)
+    assert result == b'ab'
+
+def test_if_nameindex():
+    nameindex = rsocket.if_nameindex()
+    assert len(nameindex) > 0

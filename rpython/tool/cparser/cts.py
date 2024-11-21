@@ -58,7 +58,7 @@ class DelayedStruct(object):
 
 class CTypeSpace(object):
     def __init__(self, parser=None, definitions=None, macros=None,
-                 headers=None, includes=None):
+                 headers=None, includes=None, include_dirs=None):
         self.definitions = definitions if definitions is not None else {}
         self.macros = macros if macros is not None else {}
         self.structs = {}
@@ -75,6 +75,10 @@ class CTypeSpace(object):
         if includes is not None:
             for header in includes:
                 self.include(header)
+        if include_dirs is not None:
+            self.include_dirs = include_dirs[:]
+        else:
+            self.include_dirs = []
 
     def include(self, other):
         self.ctx.include(other.ctx)
@@ -161,7 +165,8 @@ class CTypeSpace(object):
             compile_extra = []
         return ExternalCompilationInfo(
             post_include_bits=all_sources, includes=all_headers,
-            compile_extra=compile_extra)
+            compile_extra=compile_extra,
+            include_dirs=self.include_dirs)
 
     def configure_types(self):
         for name, (obj, quals) in self.ctx._declarations.iteritems():
@@ -182,12 +187,30 @@ class CTypeSpace(object):
         if not self._config_entries:
             return
         eci = self.build_eci()
-        result = rffi_platform.configure_entries(list(self._config_entries), eci)
-        for entry, TYPE in izip(self._config_entries, result):
-            # hack: prevent the source from being pasted into common_header.h
-            del TYPE._hints['eci']
-            self._config_entries[entry].become(TYPE)
-        self._config_entries.clear()
+
+        while self._config_entries:
+            configure_now = []
+            for entry in self._config_entries:
+                if self._can_configure(entry):
+                    configure_now.append(entry)
+            if not configure_now:
+                raise ValueError("configure_types() cannot make progress. "
+                                 "Maybe the cdef is invalid?")
+            result = rffi_platform.configure_entries(configure_now, eci)
+            for entry, TYPE in izip(configure_now, result):
+                # hack: prevent the source from being pasted into common_header.h
+                del TYPE._hints['eci']
+                self._config_entries[entry].become(TYPE)
+                del self._config_entries[entry]
+
+    def _can_configure(self, entry):
+        if isinstance(entry, rffi_platform.Struct):
+            # A struct containing a nested struct can only be configured if
+            # the inner one has already been configured.
+            for fieldname, fieldtype in entry.interesting_fields:
+                if isinstance(fieldtype, lltype.ForwardReference):
+                    return False
+        return True
 
     def convert_type(self, obj, quals=0):
         if isinstance(obj, model.DefinedType):

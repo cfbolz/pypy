@@ -3,8 +3,8 @@ import py
 
 from rpython.rlib.cache import Cache
 from rpython.tool.uid import HUGEVAL_BYTES
-from rpython.rlib import jit, types, rutf8
-from rpython.rlib.debug import make_sure_not_resized
+from rpython.rlib import jit, types, rutf8, rstring
+from rpython.rlib.debug import make_sure_not_resized, check_not_access_directly
 from rpython.rlib.objectmodel import (we_are_translated, newlist_hint,
      compute_unique_id, specialize, not_rpython)
 from rpython.rlib.signature import signature
@@ -21,6 +21,8 @@ from pypy.interpreter.miscutils import ThreadLocals, make_weak_value_dictionary
 
 
 __all__ = ['ObjSpace', 'OperationError', 'W_Root']
+
+_WIN32 = sys.platform.startswith('win')
 
 def get_printable_location(greenkey):
     return "unpackiterable [%s]" % (greenkey.iterator_greenkey_printable(), )
@@ -72,7 +74,11 @@ class W_Root(object):
 
     # to be used directly only by space.type implementations
     def getclass(self, space):
-        return space.gettypeobject(self.typedef)
+        # make sure that we never annotate this with access_directly set to
+        # True. otherwise every call to getclass (and other methods) has an
+        # extra indirection due to a much more complicated function set
+        check_not_access_directly(self)
+        return space.gettypefor(self.__class__)
 
     def setclass(self, space, w_subtype):
         raise oefmt(space.w_TypeError,
@@ -600,14 +606,6 @@ class ObjSpace(object):
         self._builtinmodule_list = modules
         return self._builtinmodule_list
 
-    ALL_BUILTIN_MODULES = [
-        'posix', 'nt', 'os2', 'mac', 'ce', 'riscos',
-        'math', 'array', 'select',
-        '_random', '_sre', 'time', '_socket', 'errno',
-        'unicodedata',
-        'parser', 'fcntl', '_codecs', 'binascii'
-    ]
-
     # These modules are treated like CPython treats built-in modules,
     # i.e. they always shadow any xx.py.  The other modules are treated
     # like CPython treats extension modules, and are loaded in sys.path
@@ -818,16 +816,14 @@ class ObjSpace(object):
         w_result = w_obj.immutable_unique_id(self)
         if w_result is None:
             # in the common case, returns an unsigned value
-            w_result = self.newint(r_uint(compute_unique_id(w_obj)))
+            id = compute_unique_id(w_obj)
+            if id >= 0:
+                w_result = self.newint(id)
+            else:
+                # the following path returns W_LongObject, but it should happen
+                # only on 32-bit platforms
+                w_result = self.newint(r_uint(id))
         return w_result
-
-    def hash_w(self, w_obj):
-        """shortcut for space.int_w(space.hash(w_obj))"""
-        return self.int_w(self.hash(w_obj))
-
-    def len_w(self, w_obj):
-        """shortcut for space.int_w(space.len(w_obj))"""
-        return self.int_w(self.len(w_obj))
 
     def contains_w(self, w_container, w_item):
         """shortcut for space.is_true(space.contains(w_container, w_item))"""
@@ -947,9 +943,9 @@ class ObjSpace(object):
             return None
         if not isinstance(w_obj, RequiredClass):   # or obj is None
             raise oefmt(self.w_TypeError,
-                        "'%s' object expected, got '%N' instead",
+                        "'%s' object expected, got '%T' instead",
                         wrappable_class_name(RequiredClass),
-                        w_obj.getclass(self))
+                        w_obj)
         return w_obj
 
     def unpackiterable(self, w_iterable, expected_length=-1):
@@ -1286,20 +1282,23 @@ class ObjSpace(object):
         from pypy.interpreter.generator import GeneratorIterator
         return isinstance(w_obj, GeneratorIterator)
 
-    def callable(self, w_obj):
+    def callable_w(self, w_obj):
         if self.lookup(w_obj, "__call__") is not None:
             if self.is_oldstyle_instance(w_obj):
                 # ugly old style class special treatment, but well ...
                 try:
                     self.getattr(w_obj, self.newtext("__call__"))
-                    return self.w_True
+                    return True
                 except OperationError as e:
                     if not e.match(self, self.w_AttributeError):
                         raise
-                    return self.w_False
+                    return False
             else:
-                return self.w_True
-        return self.w_False
+                return True
+        return False
+
+    def callable(self, w_obj):
+        return self.newbool(self.callable_w(w_obj))
 
     def issequence_w(self, w_obj):
         if self.is_oldstyle_instance(w_obj):
@@ -1400,6 +1399,51 @@ class ObjSpace(object):
             self.setitem(w_globals, w_key, self.builtin)
         return statement.exec_code(self, w_globals, w_locals)
 
+
+    @not_rpython
+    def _cached_compile(self, filename, source, mode, flags, hidden_applevel, ast_transform=None):
+        import os
+        from hashlib import md5
+        from rpython.config.translationoption import CACHE_DIR
+        from rpython.tool.gcc_cache import try_atomic_write
+        from pypy.module.marshal import interp_marshal
+        from pypy.interpreter.pycode import default_magic
+        h = md5(str(default_magic))
+        h.update(filename)
+        h.update(source)
+        h.update(mode)
+        h.update(str(flags))
+        h.update(str(hidden_applevel))
+        addition = ''
+        if ast_transform:
+            addition = ast_transform.func_name
+
+        cachename = os.path.join(
+            CACHE_DIR, "applevel_exec_%s_%s" % (addition, h.hexdigest()))
+        try:
+            if self.config.translating:
+                raise IOError("don't use the cache when translating pypy")
+            with open(cachename, 'rb') as f:
+                w_bin = self.newbytes(f.read())
+                w_code = interp_marshal.loads(self, w_bin)
+        except IOError:
+            # must (re)compile the source
+            ec = self.getexecutioncontext()
+            if ast_transform:
+                c = self.createcompiler()
+                tree = c.compile_to_ast(source, filename, "exec", 0)
+                tree = ast_transform(self, tree)
+                w_code = c.compile_ast(tree, filename, 'exec', 0)
+            else:
+                w_code = ec.compiler.compile(
+                    source, filename, mode, flags)
+            w_bin = interp_marshal.dumps(
+                self, w_code, self.newint(interp_marshal.Py_MARSHAL_VERSION))
+            content = self.bytes_w(w_bin)
+            try_atomic_write(cachename, content)
+        return w_code
+
+
     @not_rpython
     def appdef(self, source):
         '''Create interp-level function object from app-level source.
@@ -1463,29 +1507,13 @@ class ObjSpace(object):
                 if op == 'ge': return self.ge(w_x1, w_x2)
                 assert False, "bad value for op"
 
-    def decode_index(self, w_index_or_slice, seqlength):
-        """Helper for custom sequence implementations
-             -> (index, 0, 0) or
-                (start, stop, step)
-        """
-        if self.isinstance_w(w_index_or_slice, self.w_slice):
-            from pypy.objspace.std.sliceobject import W_SliceObject
-            assert isinstance(w_index_or_slice, W_SliceObject)
-            start, stop, step = w_index_or_slice.indices3(self, seqlength)
-        else:
-            start = self.int_w(w_index_or_slice, allow_conversion=False)
-            if start < 0:
-                start += seqlength
-            if not (0 <= start < seqlength):
-                raise oefmt(self.w_IndexError, "index out of range")
-            stop = 0
-            step = 0
-        return start, stop, step
-
-    def decode_index4(self, w_index_or_slice, seqlength):
+    def decode_index4_unsafe(self, w_index_or_slice, seqlength):
         """Helper for custom sequence implementations
              -> (index, 0, 0, 1) or
                 (start, stop, step, slice_length)
+
+        UNSAFE: if the __index__ method of one of the slice's start/stop/step
+        fields changes the sequence, then the result can be incorrect
         """
         if self.isinstance_w(w_index_or_slice, self.w_slice):
             from pypy.objspace.std.sliceobject import W_SliceObject
@@ -1493,7 +1521,7 @@ class ObjSpace(object):
             start, stop, step, length = w_index_or_slice.indices4(self,
                                                                   seqlength)
         else:
-            start = self.int_w(w_index_or_slice, allow_conversion=False)
+            start = self.getindex_w(w_index_or_slice, self.w_IndexError)
             if start < 0:
                 start += seqlength
             if not (0 <= start < seqlength):
@@ -1502,6 +1530,32 @@ class ObjSpace(object):
             step = 0
             length = 1
         return start, stop, step, length
+
+    def decode_index4(self, w_index_or_slice, w_seq):
+        """Helper for custom sequence implementations
+             -> (index, 0, 0, 1) or
+                (start, stop, step, slice_length)
+        """
+        if self.isinstance_w(w_index_or_slice, self.w_slice):
+            from pypy.objspace.std.sliceobject import W_SliceObject
+            assert isinstance(w_index_or_slice, W_SliceObject)
+            # it's important to first unpack the slice and then read the length
+            # of the sequence, because the former can change the latter
+            start, stop, step = w_index_or_slice.unpack(self)
+            seqlength = self.len_w(w_seq)
+            start, stop, step, length = w_index_or_slice.adjust_indices(start, stop, step, seqlength)
+        else:
+            start = self.getindex_w(w_index_or_slice, self.w_IndexError)
+            seqlength = self.len_w(w_seq)
+            if start < 0:
+                start += seqlength
+            if not (0 <= start < seqlength):
+                raise oefmt(self.w_IndexError, "index out of range")
+            stop = 0
+            step = 0
+            length = 1
+        return start, stop, step, length
+
 
     def getindex_w(self, w_obj, w_exception, objdescr=None, errmsg=None):
         """Return w_obj.__index__() as an RPython int.
@@ -1722,7 +1776,6 @@ class ObjSpace(object):
 
     def bytes0_w(self, w_obj):
         "Like bytes_w, but rejects strings with NUL bytes."
-        from rpython.rlib import rstring
         result = w_obj.str_w(self)
         if '\x00' in result:
             raise oefmt(self.w_TypeError,
@@ -1739,7 +1792,18 @@ class ObjSpace(object):
             from pypy.module.sys.interp_encoding import getfilesystemencoding
             w_obj = self.call_method(self.w_unicode, 'encode', w_obj,
                                      getfilesystemencoding(self))
-        return self.bytes0_w(w_obj)
+            return self.bytes0_w(w_obj)
+        elif _WIN32:
+            # Make sure the w_obj is ascii (utf8)
+            bytestr = w_obj.str_w(self)
+            result = rutf8.decode_latin_1(bytestr)
+            if '\x00' in result:
+                raise oefmt(self.w_TypeError,
+                            "argument must be a string without NUL characters")
+            return rstring.assert_str0(result)
+            
+        else:
+            return self.bytes0_w(w_obj)
 
     def fsencode_or_none_w(self, w_obj):
         return None if self.is_none(w_obj) else self.fsencode_w(w_obj)
@@ -1821,7 +1885,6 @@ class ObjSpace(object):
 
     def unicode0_w(self, w_obj):
         "Like unicode_w, but rejects strings with NUL bytes."
-        from rpython.rlib import rstring
         result = w_obj.utf8_w(self).decode('utf8')
         if u'\x00' in result:
             raise oefmt(self.w_TypeError,

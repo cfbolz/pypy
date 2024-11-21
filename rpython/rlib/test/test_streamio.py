@@ -1123,6 +1123,7 @@ class TestDiskFile:
             alarm(0)
             signal(SIGALRM, SIG_DFL)
 
+    @pytest.mark.skipif("sys.platform == 'darwin'")
     def test_append_mode(self):
         tfn = str(udir.join('streamio-append-mode'))
         fo = streamio.open_file_as_stream # shorthand
@@ -1138,6 +1139,7 @@ class TestDiskFile:
         assert x.read() == 'abc123456'
         x.close()
 
+    @pytest.mark.skipif("sys.platform == 'darwin'")
     def test_seek_changed_underlying_position(self):
         tfn = str(udir.join('seek_changed_underlying_position'))
         fo = streamio.open_file_as_stream # shorthand
@@ -1155,6 +1157,7 @@ class TestDiskFile:
         assert x.tell() == 0    # detected in this case.  not always.
         # the point of the test is that we don't crash in an assert.
 
+    @pytest.mark.skipif("sys.platform == 'darwin'")
     def test_ignore_ioerror_in_readall_if_nonempty_result(self):
         # this is the behavior of regular files in CPython 2.7, as
         # well as of _io.FileIO at least in CPython 3.3.  This is
@@ -1216,3 +1219,29 @@ def speed_main():
     timeit(opener=diskopen)
     timeit(opener=mmapopen)
     timeit(opener=open)
+
+from hypothesis import strategies, given
+
+@given(strategies.lists(strategies.tuples(strategies.binary(), strategies.sampled_from(['\r', '\n', '\r\n']))),
+       strategies.binary())
+def test_replace_crlf_with_lf(l, suffix):
+    res = []
+    for s, n in l:
+        res.append(s)
+        res.append(n)
+    res.append(suffix)
+    s = "".join(res)
+    substrings = s.split("\r")
+    result = [substrings[0]]
+    for substring in substrings[1:]:
+        if not substring:
+            result.append("")
+        elif substring[0] == "\n":
+            result.append(substring[1:])
+        else:
+            result.append(substring)
+    res = "\n".join(result)
+
+    res2 = streamio.replace_crlf_with_lf(s)
+    assert "\r" not in res2
+    assert res == res2

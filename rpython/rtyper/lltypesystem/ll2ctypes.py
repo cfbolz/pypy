@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import sys
 
 try:
@@ -154,6 +156,7 @@ def _setup_ctypes_cache():
         rffi.INT:        ctypes.c_int,
         rffi.INT_real:   ctypes.c_int,
         rffi.UINT:       ctypes.c_uint,
+        rffi.UINT_real:  ctypes.c_uint,
         rffi.LONG:       ctypes.c_long,
         rffi.ULONG:      ctypes.c_ulong,
         rffi.LONGLONG:   ctypes.c_longlong,
@@ -568,7 +571,7 @@ class _parentable_mixin(object):
                             "double conversion from lltype to ctypes?")
         # XXX don't store here immortal structures
         if DEBUG_ALLOCATED:
-            print >> sys.stderr, "LL2CTYPES:", hex(addr)
+            print("LL2CTYPES:", hex(addr), file=sys.stderr)
         ALLOCATED[addr] = self
 
     def _addressof_storage(self):
@@ -582,7 +585,7 @@ class _parentable_mixin(object):
         # allow the ctypes object to go away now
         addr = ctypes.cast(self._storage, ctypes.c_void_p).value
         if DEBUG_ALLOCATED:
-            print >> sys.stderr, "LL2C FREE:", hex(addr)
+            print("LL2C FREE:", hex(addr), file=sys.stderr)
         try:
             del ALLOCATED[addr]
         except KeyError:
@@ -675,7 +678,7 @@ class _fixedsizedarray_mixin(_parentable_mixin):
 
     def getitem(self, index, uninitialized_ok=False):
         if hasattr(self, '_items'):
-            obj = lltype._fixedsizearray.getitem.im_func(self, 
+            obj = lltype._fixedsizearray.getitem.im_func(self,
                                      index, uninitialized_ok=uninitialized_ok)
             return obj
         else:
@@ -1089,6 +1092,8 @@ def ctypes2lltype(T, cobj, force_real_ctypes_function=False):
                     if array(tc).itemsize == array('u').itemsize:
                         import struct
                         cobj &= 256 ** struct.calcsize(tc) - 1
+                        # CPython2 allows this
+                        # PyPy2 will create the array but not allow indexing it
                         llobj = array('u', array(tc, (cobj,)).tostring())[0]
                         break
                 else:
@@ -1204,7 +1209,7 @@ if sys.platform == 'darwin':
 else:
     _findLib_gcc_fallback = lambda name: None
 
-def get_ctypes_callable(funcptr, calling_conv):
+def get_ctypes_callable(funcptr, calling_conv, natural_arity):
     if not ctypes:
         raise ImportError("ctypes is needed to use ll2ctypes")
 
@@ -1297,10 +1302,16 @@ def get_ctypes_callable(funcptr, calling_conv):
 
     # get_ctypes_type() can raise NotImplementedError too
     from rpython.rtyper.lltypesystem import rffi
-    cfunc.argtypes = [get_ctypes_type(T) if T is not rffi.VOIDP
+    argtypes = [get_ctypes_type(T) if T is not rffi.VOIDP
                                          else ctypes.c_void_p
                       for T in FUNCTYPE.ARGS
                       if not T is lltype.Void]
+    if natural_arity != -1:
+        cfunc.argtypes = argtypes[:natural_arity]
+        cfunc.extraargs = argtypes[natural_arity:]
+    else:
+        cfunc.argtypes = argtypes
+        cfunc.extraargs = []
     if FUNCTYPE.RESULT is lltype.Void:
         cfunc.restype = None
     else:
@@ -1310,26 +1321,29 @@ def get_ctypes_callable(funcptr, calling_conv):
 class LL2CtypesCallable(object):
     # a special '_callable' object that invokes ctypes
 
-    def __init__(self, FUNCTYPE, calling_conv):
+    def __init__(self, FUNCTYPE, calling_conv, natural_arity):
         self.FUNCTYPE = FUNCTYPE
         self.calling_conv = calling_conv
         self.trampoline = None
+        self.natural_arity = natural_arity
         #self.funcptr = ...  set later
 
     def __call__(self, *argvalues):
         with rlock:
             if self.trampoline is None:
                 # lazily build the corresponding ctypes function object
-                cfunc = get_ctypes_callable(self.funcptr, self.calling_conv)
-                self.trampoline = get_ctypes_trampoline(self.FUNCTYPE, cfunc)
+                cfunc = get_ctypes_callable(self.funcptr, self.calling_conv,
+                                            self.natural_arity)
+                self.trampoline = get_ctypes_trampoline(self.FUNCTYPE, cfunc, self.natural_arity)
         # perform the call
         return self.trampoline(*argvalues)
 
     def get_real_address(self):
-        cfunc = get_ctypes_callable(self.funcptr, self.calling_conv)
+        cfunc = get_ctypes_callable(self.funcptr, self.calling_conv,
+                                    self.natural_arity)
         return ctypes.cast(cfunc, ctypes.c_void_p).value
 
-def get_ctypes_trampoline(FUNCTYPE, cfunc):
+def get_ctypes_trampoline(FUNCTYPE, cfunc, natural_arity=-1):
     RESULT = FUNCTYPE.RESULT
     container_arguments = []
     for i in range(len(FUNCTYPE.ARGS)):
@@ -1349,6 +1363,8 @@ def get_ctypes_trampoline(FUNCTYPE, cfunc):
                 cvalue = lltype2ctypes(argvalues[i])
                 if i in container_arguments:
                     cvalue = cvalue.contents
+                if natural_arity > 0 and i >= natural_arity:
+                    cvalue = cfunc.extraargs[i - natural_arity](cvalue)
                 cargs.append(cvalue)
         _callback_exc_info = None
         _restore_c_errno()

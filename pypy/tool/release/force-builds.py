@@ -35,7 +35,8 @@ JIT_BUILDERS = [
     'pypy-c-jit-linux-x86-32',
     'pypy-c-jit-linux-x86-64',
 #    'pypy-c-jit-freebsd-9-x86-64',
-    'pypy-c-jit-macosx-x86-64',
+    'pypy-c-jit-macos-x86-64',
+    'pypy-c-jit-macos-arm64',
 #    'pypy-c-jit-win-x86-32',
     'pypy-c-jit-win-x86-64',
     'pypy-c-jit-linux-s390x',
@@ -69,6 +70,8 @@ def main(options):
 
     if options.minimal:
         builders = JIT_BUILDERS
+    elif options.branch.startswith('release'):
+        builders = OWN_BUILDERS + JIT_BUILDERS
     else:
         builders = RPYTHON_BUILDERS + OWN_BUILDERS + JIT_BUILDERS
 

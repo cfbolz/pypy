@@ -1,11 +1,12 @@
 import os
 import sys
 
-from rpython.rlib import rposix, rposix_stat
+from rpython.rlib import rposix, rposix_stat, rstring
 from rpython.rlib import objectmodel, rurandom
 from rpython.rlib.objectmodel import specialize, not_rpython
 from rpython.rlib.rarithmetic import r_longlong, intmask, r_uint
 from rpython.rlib.unroll import unrolling_iterable
+from rpython.rlib.rutf8 import codepoints_in_utf8
 
 from pypy.interpreter.gateway import unwrap_spec
 from pypy.interpreter.error import (
@@ -27,6 +28,8 @@ c_int = "c_int"
 # returns a uid_t or gid_t returns either an int or a long, depending
 # on whether it fits or not, but always positive.
 c_uid_t = 'c_uid_t'
+# this looks like a typo but is not, it goes to visit_c_uid_t and there
+# is no visit_c_gid_t
 c_gid_t = 'c_uid_t'
 
 def wrap_uid(space, uid):
@@ -46,8 +49,11 @@ class FileEncoder(object):
     def as_bytes(self):
         return self.space.fsencode_w(self.w_obj)
 
-    def as_unicode(self):
-        return self.space.unicode0_w(self.w_obj)
+    def as_utf8(self):
+        ret = self.space.utf8_w(self.w_obj)
+        if '\x00' in ret:
+            raise oefmt(self.space.w_TypeError, "embedded null character")
+        return ret
 
 class FileDecoder(object):
     is_unicode = False
@@ -57,16 +63,17 @@ class FileDecoder(object):
         self.w_obj = w_obj
 
     def as_bytes(self):
-        return self.space.bytes0_w(self.w_obj)
+        return self.space.fsencode_w(self.w_obj)
 
-    def as_unicode(self):
-        space = self.space
-        w_unicode = space.call_method(self.w_obj, 'decode',
-                                      getfilesystemencoding(space))
-        return space.unicode0_w(w_unicode)
+    def as_utf8(self):
+        ret = self.space.utf8_w(self.w_obj)
+        if '\x00' in ret:
+            raise oefmt(self.space.w_TypeError, "embedded null character")
+        return ret
 
 @specialize.memo()
 def dispatch_filename(func, tag=0):
+    @specialize.argtype(1)
     def dispatch(space, w_fname, *args):
         if space.isinstance_w(w_fname, space.w_unicode):
             fname = FileEncoder(space, w_fname)
@@ -104,6 +111,7 @@ def u2utf8(space, u_str):
 def open(space, w_fname, flag, mode=0777):
     """Open a file (for low level IO).
 Return a file descriptor (a small integer)."""
+    from rpython.rlib import rposix
     try:
         fd = dispatch_filename(rposix.open)(
             space, w_fname, flag, mode)
@@ -220,7 +228,6 @@ STATVFS_FIELDS = unrolling_iterable(enumerate(rposix_stat.STATVFS_FIELDS))
 def build_stat_result(space, st):
     FIELDS = STAT_FIELDS    # also when not translating at all
     lst = [None] * rposix_stat.N_INDEXABLE_FIELDS
-    w_keywords = space.newdict()
     stat_float_times = space.fromcache(StatState).stat_float_times
     for i, (name, TYPE) in FIELDS:
         if i < rposix_stat.N_INDEXABLE_FIELDS:
@@ -228,25 +235,36 @@ def build_stat_result(space, st):
             # 'st_Xtime' as an integer, too
             w_value = space.newint(st[i])
             lst[i] = w_value
-        elif name.startswith('st_'):    # exclude 'nsec_Xtime'
-            w_value = space.newint(getattr(st, name))
-            space.setitem(w_keywords, space.newtext(name), w_value)
-
-    # non-rounded values for name-based access
-    if stat_float_times:
-        space.setitem(w_keywords,
-                      space.newtext('st_atime'), space.newfloat(st.st_atime))
-        space.setitem(w_keywords,
-                      space.newtext('st_mtime'), space.newfloat(st.st_mtime))
-        space.setitem(w_keywords,
-                      space.newtext('st_ctime'), space.newfloat(st.st_ctime))
-    #else:
-    #   filled by the __init__ method
+        else:
+            break
 
     w_tuple = space.newtuple(lst)
     w_stat_result = space.getattr(space.getbuiltinmodule(os.name),
                                   space.newtext('stat_result'))
-    return space.call_function(w_stat_result, w_tuple, w_keywords)
+    # this is a bit of a hack: circumvent the huge mess of structseq_new and a
+    # dict argument and just build the object ourselves. then it stays nicely
+    # virtual and eg. os.islink can just get the field from the C struct and be
+    # done.
+    w_tup_new = space.getattr(space.w_tuple,
+                              space.newtext('__new__'))
+    w_result = space.call_function(w_tup_new, w_stat_result, w_tuple)
+    for i, (name, TYPE) in FIELDS:
+        if i < rposix_stat.N_INDEXABLE_FIELDS:
+            continue
+        elif name.startswith('st_'):    # exclude 'nsec_Xtime'
+            w_value = space.newint(getattr(st, name))
+            w_result.setdictvalue(space, name, w_value)
+
+    # non-rounded values for name-based access
+    if stat_float_times:
+        w_result.setdictvalue(space, 'st_atime', space.newfloat(st.st_atime))
+        w_result.setdictvalue(space, 'st_mtime', space.newfloat(st.st_mtime))
+        w_result.setdictvalue(space, 'st_ctime', space.newfloat(st.st_ctime))
+    else:
+        w_result.setdictvalue(space, 'st_atime', space.newint(st[7]))
+        w_result.setdictvalue(space, 'st_mtime', space.newint(st[8]))
+        w_result.setdictvalue(space, 'st_ctime', space.newint(st[9]))
+    return w_result
 
 
 def build_statvfs_result(space, st):
@@ -422,19 +440,16 @@ def remove(space, w_path):
 
 def _getfullpathname(space, w_path):
     """helper for ntpath.abspath """
+    path = space.fsencode_w(w_path)
     try:
-        if space.isinstance_w(w_path, space.w_unicode):
-            path = FileEncoder(space, w_path)
-            fullpath = rposix.getfullpathname(path)
-            w_fullpath = u2utf8(space, fullpath)
-        else:
-            path = space.bytes0_w(w_path)
-            fullpath = rposix.getfullpathname(path)
-            w_fullpath = space.newbytes(fullpath)
+        fullpath = rposix.getfullpathname(path)
     except OSError as e:
-        raise wrap_oserror2(space, e, w_path)
+        raise wrap_oserror(space, e, path)
+    if space.isinstance_w(w_path, space.w_unicode):
+        ulen = codepoints_in_utf8(fullpath)
+        return space.newutf8(fullpath, ulen)
     else:
-        return w_fullpath
+        return space.newbytes(fullpath)
 
 def getcwd(space):
     """Return the current working directory."""
@@ -626,7 +641,7 @@ def pipe(space):
         fd1, fd2 = os.pipe()
     except OSError as e:
         raise wrap_oserror(space, e)
-    return space.newtuple([space.newint(fd1), space.newint(fd2)])
+    return space.newtuple2(space.newint(fd1), space.newint(fd2))
 
 @unwrap_spec(mode=c_int)
 def chmod(space, w_path, mode):
@@ -793,12 +808,12 @@ def openpty(space):
         master_fd, slave_fd = os.openpty()
     except OSError as e:
         raise wrap_oserror(space, e)
-    return space.newtuple([space.newint(master_fd), space.newint(slave_fd)])
+    return space.newtuple2(space.newint(master_fd), space.newint(slave_fd))
 
 def forkpty(space):
     pid, master_fd = _run_forking_function(space, "P")
-    return space.newtuple([space.newint(pid),
-                           space.newint(master_fd)])
+    return space.newtuple2(space.newint(pid),
+                           space.newint(master_fd))
 
 @unwrap_spec(pid=c_int, options=c_int)
 def waitpid(space, pid, options):
@@ -810,7 +825,7 @@ def waitpid(space, pid, options):
         pid, status = os.waitpid(pid, options)
     except OSError as e:
         raise wrap_oserror(space, e)
-    return space.newtuple([space.newint(pid), space.newint(status)])
+    return space.newtuple2(space.newint(pid), space.newint(status))
 
 @unwrap_spec(status=c_int)
 def _exit(space, status):

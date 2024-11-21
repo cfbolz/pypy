@@ -101,7 +101,7 @@ class AbstractThreadTests(AbstractGCTestClass):
         res = fn()
         assert res == 42
 
-    @py.test.mark.xfail(platform.machine() == 's390x',
+    @py.test.mark.xfail(platform.machine() == 's390x' or sys.platform == 'darwin',
                         reason='may fail this test under heavy load')
     def test_gc_locking(self):
         import time
@@ -173,7 +173,7 @@ class AbstractThreadTests(AbstractGCTestClass):
         answers = fn()
         assert answers == expected
 
-    def test_acquire_timed(self):
+    def test_acquire_timed_1sec(self):
         import time
         def f():
             l = allocate_lock()

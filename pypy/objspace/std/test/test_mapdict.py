@@ -325,6 +325,10 @@ def test_attr_immutability(monkeypatch):
     assert obj.checkstorage == [10, 30]
     assert obj.map.ever_mutated == True
     assert obj.map.back.ever_mutated == False
+    assert obj.map.repr().startswith(
+        "<PlainAttribute b DICT 1 "
+        "<PlainAttribute a DICT 0 immutable "
+        "<DictTerminator w_cls=")
 
     indices = []
 
@@ -436,7 +440,6 @@ def test_special():
     assert obj.getweakref() is None
     obj.setweakref(space, lifeline1)
     obj.delweakref()
-
 
 
 def test_slots():
@@ -1258,6 +1261,60 @@ class AppTestWithMapDict(object):
         res = list(d.iteritems())
         assert res == [('x', 'a'), ('y', 1), ('z', 'b')]
 
+    def test_copy(self):
+        class A(object):
+            pass
+
+        # an instance with unboxed storage
+        a = A()
+        a.x = "a"
+        a.y = 1
+        a.z = "b"
+        assert a.__dict__.copy() == {"x": "a", "y": 1, "z": "b"}
+
+    def test_dict_equality(self):
+        class A(object):
+            pass
+
+        a1 = A()
+        a1.x = "a"
+        a1.y = 1
+        a1.z = "b"
+        a2 = A()
+        a2.x = "a"
+        a2.y = 1
+        a2.z = "b"
+        assert a1.__dict__ == a2.__dict__
+
+        class WeirdCompare(object):
+            def __eq__(self, other):
+                a1.a = None
+                a2.a = None
+                return True
+
+        a1 = A()
+        a1.x = WeirdCompare()
+        a1.a = 'f'
+        a2 = A()
+        a2.x = WeirdCompare()
+        a2.a = 'f'
+        assert a1.__dict__ == a2.__dict__
+
+        class WeirdCompare(object):
+            def __eq__(self, other):
+                import weakref
+                weakref.ref(a1) # changes the map
+                return True
+
+        a1 = A()
+        a1.x = WeirdCompare()
+        a1.a = 'f'
+        a2 = A()
+        a2.x = WeirdCompare()
+        a2.a = 'f'
+        assert a1.__dict__ == a2.__dict__
+
+
 
 class AppTestWithMapDictAndCounters(object):
     spaceconfig = {"objspace.std.withmethodcachecounter": True}
@@ -1286,6 +1343,13 @@ class AppTestWithMapDictAndCounters(object):
             return space.wrap((failures, successes, globalfailures))
         check.unwrap_spec = [gateway.ObjSpace, gateway.W_Root, 'text']
         cls.w_check = cls.space.wrap(gateway.interp2app(check))
+
+        def is_immutable(space, w_obj, name):
+            map = w_obj._get_mapdict_map()
+            attr = map.find_map_attr(name, DICT)
+            return space.newbool(not attr.ever_mutated)
+        is_immutable.unwrap_spec = [gateway.ObjSpace, gateway.W_Root, 'text']
+        cls.w_is_immutable = cls.space.wrap(gateway.interp2app(is_immutable))
 
     def test_simple(self):
         class A(object):
@@ -1650,6 +1714,128 @@ class AppTestWithMapDictAndCounters(object):
         assert res1 == "mymethod"
         assert res2 == "foobar"
 
+    def test_load_attr_bug_class_name_turns_into_descriptor(self):
+        class WillTurnIntoDescr(object):
+            pass
+
+        class Obj(object):
+            f = WillTurnIntoDescr()
+        o = Obj()
+        o.f = 12
+
+        def readf(o):
+            return o.f
+
+        # this used to fill the cache
+        assert readf(o) == 12
+
+        # make WillTurnIntoDescr a descriptor
+        WillTurnIntoDescr.__get__ = lambda *args: 15
+        WillTurnIntoDescr.__set__ = lambda *args: None
+        assert readf(o) == 15 # used to return 12
+
+    def test_store_attr_simple(self):
+        class A(object):
+            pass
+        a = A()
+        a.x = 0
+        def f():
+            a.x = 12
+            return 42
+        res = self.check(f, 'x')
+        assert res == (1, 0, 0)
+        res = self.check(f, 'x')
+        assert res == (0, 1, 0)
+        assert a.x == 12
+
+    def test_store_attr_simple_shared_with_load(self):
+        class A(object):
+            pass
+        a = A()
+        a.x = 0
+        def f():
+            a.x = a.x + 1
+            return 42
+        res = self.check(f, 'x')
+        assert res == (1, 1, 0) # miss for the first read, hit for the write
+        res = self.check(f, 'x')
+        assert res == (0, 2, 0)
+        assert a.x == 2
+
+    def test_store_attr_slots(self):
+        class A(object):
+            __slots__ = ['x']
+        a = A()
+        a.x = 42
+        def f():
+            a.x = 12
+            return 42
+        #
+        res = self.check(f, 'x')
+        assert res == (1, 0, 0)
+        res = self.check(f, 'x')
+        assert res == (0, 1, 0)
+        res = self.check(f, 'x')
+        assert res == (0, 1, 0)
+        res = self.check(f, 'x')
+        assert res == (0, 1, 0)
+        assert a.x == 12
+
+    def test_store_attr_load_attr_interaction_bug(self):
+        class A(object):
+            def __setattr__(self, name, value):
+                raise TypeError
+
+        a = A()
+        object.__setattr__(a, "buggyattr", 12)
+        with raises(TypeError):
+            a.buggyattr *= 2 # load_attr reads the cache, store_attr reuses it, bug
+
+        class A(object):
+            def __getattribute__(self, name):
+                raise TypeError
+
+        a = A()
+        a.buggyattr = 12 # initialize, doesn't fill cache
+        a.buggyattr = 12 # fill cache
+        with raises(TypeError):
+            a.buggyattr # store_attr makes a cache entry, load_attr reuses it (but shouldn't)
+
+    def test_store_attr_immutability_bug(self):
+        class A(object):
+            pass
+        a = A()
+        a.x = 12
+        assert self.is_immutable(a, 'x')
+        a.x = 13
+        assert not self.is_immutable(a, 'x')
+
+    def test_store_cache_init(self):
+        class A(object):
+            pass
+        def f():
+            a = A()
+            a.attrinita = 10
+            a.attrinitb = 12
+            return a.attrinitb + 30
+        res = self.check(f, 'attrinitb')
+        assert res == (1, 1, 0)
+        res = self.check(f, 'attrinitb')
+        assert res == (0, 2, 0)
+
+    def test_store_cache_unboxing_problem(self):
+        class A(object):
+            pass
+        def f():
+            a = A()
+            a.attrinita = 10.12
+            a = A()
+            a.attrinita = 10.12
+            a = A()
+            a.attrinita = 12
+            return a.attrinita + 30
+        res = self.check(f, 'attrinita')
+        assert res == (2, 2, 0)
 
 
 class AppTestGlobalCaching(AppTestWithMapDict):
@@ -1733,3 +1919,20 @@ class TestMapDictImplementationUsingnewdict(BaseTestRDictImplementation):
     def test_setdefault_fast(self):
         # mapdict can't pass this, which is fine
         pass
+
+def test_correct_method_sharing(space):
+    from pypy.objspace.std import bytesobject, objectobject, unicodeobject
+    # see long comment in typedef.py, _getusercls
+
+    # first check that random subclasses share code
+    w_bytessub = space.call_function(space.w_type, space.newtext("bytessub"), space.newtuple([space.w_bytes]), space.newdict())
+    w_unicodesub = space.call_function(space.w_type, space.newtext("unicodesub"), space.newtuple([space.w_unicode]), space.newdict())
+    w_inst1 = space.allocate_instance(bytesobject.W_BytesObject, w_bytessub)
+    w_inst2 = space.allocate_instance(unicodeobject.W_UnicodeObject, w_unicodesub)
+    assert w_inst1.getclass.im_func is w_inst2.getclass.im_func
+
+    # but object doesn't!
+    w_objectsub = space.call_function(space.w_type, space.newtext("objectsub"), space.newtuple([space.w_object]), space.newdict())
+    w_inst2 = space.allocate_instance(objectobject.W_ObjectObject, w_objectsub)
+    assert w_inst1.getclass.im_func is not w_inst2.getclass.im_func
+

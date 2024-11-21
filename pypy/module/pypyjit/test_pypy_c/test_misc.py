@@ -1,4 +1,4 @@
-import py, sys
+import pytest, sys
 from pypy.module.pypyjit.test_pypy_c.test_00_model import BaseTestPyPyC
 
 
@@ -281,6 +281,8 @@ class TestMisc(BaseTestPyPyC):
             guard_nonnull_class(p17, ..., descr=...)
             guard_not_invalidated?
             i21 = getfield_gc_i(p17, descr=<FieldS .*W_Array.*.inst_len .*>)
+            i22 = int_lt(i21, 0)
+            guard_false(i22, descr=...)
             i23 = int_lt(0, i21)
             guard_true(i23, descr=...)
             i24 = getfield_gc_i(p17, descr=<FieldU .*W_ArrayBase.inst__buffer .*>)
@@ -421,3 +423,120 @@ class TestMisc(BaseTestPyPyC):
         # the following assertion fails if the loop was cancelled due
         # to "abort: vable escape"
         assert len(loops) == 1
+
+    def test_stat_result_virtual(self):
+        def main(n):
+            import os
+            res = 0
+            for i in range(n):
+                res += os.path.islink(__file__) # ID: islink
+            return res
+        log = self.run(main, [3000])
+        loop, = log.loops_by_id("islink")
+        opnames = log.opnames(loop.allops())
+        # one left (used to be 20+)
+        assert opnames.count('new_with_vtable') == 1
+        assert opnames.count('new') == 0
+        assert opnames.count('new_array_clear') == 0
+
+    @pytest.mark.skipif("sys.maxint == 2 ** 31 - 1")
+    def test_locals(self):
+        def main(n):
+            res = 0
+            for i in range(n):
+                locals()["abc"] = 1
+                res += locals()["abc"] + locals()["i"]
+            return res
+        log = self.run(main, [3000])
+        loop, = log.loops_by_filename(self.filepath)
+        assert loop.match("""
+            ...
+            i80 = int_ge(i76, i33)
+            guard_false(i80, descr=...)
+            i82 = int_add(i76, 1)
+            setfield_gc(p16, i82, descr=...)
+            guard_not_invalidated(descr=...)
+            setarrayitem_gc(p63, 1, i71, descr=...)
+            setarrayitem_gc(p63, 2, i76, descr=...)
+            setarrayitem_gc(p63, 0, i77, descr=...)
+            i87 = int_add_ovf(i71, i82)
+            guard_no_overflow(descr=...)
+
+            --TICK--
+
+            i92 = arraylen_gc(p61, descr=...)
+            i93 = arraylen_gc(p63, descr=...)
+            jump(..., descr=...)
+        """)
+
+    def test_locals_in_inlined_function(self):
+        def main(n):
+            def g():
+                locals()["ABC"] = True
+                return 1
+            res = 0
+            for i in range(n):
+                res += g()
+            return res
+        log = self.run(main, [3000])
+        loop, = log.loops_by_filename(self.filepath)
+        opnames = log.opnames(loop.allops())
+        assert "new" not in opnames
+
+    def test_sys_flags_access(self):
+        def main(n):
+            import sys
+            x = 0
+            for i in range(n):
+                import sys
+                flags = sys.flags # ID: flags
+                x += flags.debug
+        log = self.run(main, [3000])
+        loop, = log.loops_by_id("flags", is_entry_bridge=True)
+        ops = loop.ops_by_id("flags")
+        assert ops == [] # used to be a getfield_gc_r on an ObjectMutableCell
+
+    def test_tuple_slice(self):
+        def main(n):
+            t = (1, 2, 3, 4, 5, n)
+            res = 0
+            for i in range(n):
+                res += len(t[0:5:2]) # ID: getslice
+        log = self.run(main, [3000])
+        loop, = log.loops_by_id("getslice")
+        ops = loop.ops_by_id("getslice")
+        opnames = log.opnames(ops)
+        assert "new_with_vtables" not in opnames
+        assert "call_may_force_r" not in opnames
+        assert "call_r" in opnames # _getslice_advanced
+
+    def test_tuple_slice_virtual(self):
+        def main(n):
+            t = (1, 2, 3, 4, 5, n)
+            res = 0
+            for i in range(n):
+                t = (1, 2, 3, 4, 5, n)
+                res += len(t[slice(0, 5)]) # ID: getslice
+        log = self.run(main, [3000])
+        loop, = log.loops_by_id("getslice")
+        ops = loop.ops_by_id("getslice")
+        opnames = log.opnames(ops)
+        assert "new_with_vtables" not in opnames
+        assert "call_may_force_r" not in opnames
+        assert "new_array_clear" not in opnames
+
+    def test_id_no_rbigint(self):
+        def main(n):
+            l = [object() for i in range(n)]
+            res = 0
+            for obj in l:
+                res ^= id(obj) # ID: id
+        log = self.run(main, [3000])
+        loop, = log.loops_by_id("id")
+        ops = loop.ops_by_id("id")
+        opnames = log.opnames(ops)
+        if sys.maxsize > 2**32:
+            # used to be calls to fromrarith_int__r_uint and rbigint.xor. they
+            # are gone, but only on 64-bit
+            assert "call_r" not in opnames
+        assert opnames.count('call_i') == 1 # _ll_1_gc_id__pypy_interpreter_baseobjspace_W_RootPtr

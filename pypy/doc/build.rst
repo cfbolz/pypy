@@ -8,9 +8,9 @@ For building PyPy, we recommend installing a pre-built PyPy first (see
 lot longer to run -- depending on your architecture, between two and three
 times as long.
 
-Even when using PyPy to build PyPy, translation is time-consuming -- 30
-minutes on a fast machine -- and RAM-hungry.  You will need **at least** 2 GB
-of memory on a 32-bit machine and 4GB on a 64-bit machine.
+Even when using PyPy to build PyPy, translation is time-consuming -- 20
+minutes on a fast machine -- and RAM-hungry.  You will need **at least** 3 GB
+of memory on a 32-bit machine and 6GB on a 64-bit machine.
 
 Before you start
 ----------------
@@ -31,7 +31,7 @@ Clone the repository
 If you prefer to compile your own PyPy, or if you want to modify it, you
 will need to obtain a copy of the sources.  This can be done either by
 `downloading them from the download page`_ or by checking them out from the
-repository using mercurial.  We suggest using mercurial if you want to access
+repository using git.  We suggest using git if you want to access
 the current development.
 
 .. _downloading them from the download page: https://www.pypy.org/download.html
@@ -39,24 +39,23 @@ the current development.
 You must issue the following command on your
 command line, DOS box, or terminal::
 
-    hg clone https://foss.heptapod.net/pypy/pypy pypy
+    git clone https://github.com/pypy/pypy.git
 
 This will clone the repository and place it into a directory
 named ``pypy``, and will get you the PyPy source in ``pypy/pypy`` and
 documentation files in ``pypy/pypy/doc``.
 We try to ensure that the tip is always stable, but it might
 occasionally be broken.  You may want to check out `our nightly tests`_:
-find a revision (12-chars alphanumeric string, e.g. "963e808156b3")
-that passed at least the
-``{linux32}`` tests (corresponding to a ``+`` sign on the
+find a revision hash, e.g. "963e808156b3", that passed at least the
+``{linux64}`` tests (corresponding to a ``+`` sign on the
 line ``success``) and then, in your cloned repository, switch to this revision
 using::
 
-    hg up -r XXXXX
+    git checkout XXXXX
 
-where XXXXX is the revision id.
+where XXXXX is the revision hash.
 
-.. _our nightly tests: https://buildbot.pypy.org/summary?branch=%3Ctrunk%3E
+.. _our nightly tests: https://buildbot.pypy.org/summary?branch=main
 
 
 Install build-time dependencies
@@ -97,7 +96,7 @@ after building PyPy, otherwise the corresponding CFFI modules are not
 built (you can run or re-run `lib_pypy/pypy_tools/build_cffi_imports.py`_ to
 build them; you don't need to re-translate the whole PyPy):
 
-.. _`lib_pypy/pypy_tools/build_cffi_imports.py`: https://foss.heptapod.net/pypy/pypy/-/blob/branch/default/lib_pypy/pypy_tools/build_cffi_imports.py
+.. _`lib_pypy/pypy_tools/build_cffi_imports.py`: https://github.com/pypy/pypy/blob/main/lib_pypy/pypy_tools/build_cffi_imports.py
 
 sqlite3
     libsqlite3
@@ -146,25 +145,24 @@ On SLES11::
 
 On Mac OS X:
 
-Currently PyPy does not support M1 Apple Silicon (arm64). You must use the 
-x86_64 emulation mode, which requires pre-pending ``arch -x86_64`` to some
-commands. When installed properly, homebrew will use a second installation 
-at ``/usr/local/bin/brew``. 
+Currently PyPy supports both building on both Apple Silicon (M1, Arm64) and
+X86_64. You must use an appropriate toolchain for building: either ``arm64``
+or ``x86_64``. "Fat" universal2 builds are not supported.
 
 Most of the build-time dependencies are installed alongside the Developer
-Tools. ``libffi`` and ``openssl`` still need to be installed, and a
-brew-provided pypy will speed up translation:
+Tools. ``libx11`` is needed for ``tkinter``.  ``openssl`` needs to be
+installed for tests, and a brew-provided pypy will speed up translation. Note
+that you must use the architecture-appropriate x86_64 or arm64 ``brew``
+command:
 
 .. code-block:: shell
 
     xcode-select --install
-	# for M1 machines to use x86_64 mode
-	# softwareupdate --install-rosetta
-	# install brew, use the arch -x86_64 prefix on M1
-	/usr/local/bin/brew install libffi openssl pypy pkg-config
+	brew install openssl pypy pkg-config libx11
+    # expose openssl in the cffi _ssl_build script
+    export CPPFLAGS=$(pkg-config openssl --cflags-only-I)
+    export LDFLAGS=$(pkg-config openssl --libs-only-L)
 
-After setting this up, translation (described next) will find the libs as
-expected via ``pkg-config``.
 
 Set environment variables that will affect translation
 ------------------------------------------------------
@@ -177,7 +175,7 @@ The following environment variables can be used to tweak the result:
 | CC                     | compiler to use                                           |
 +------------------------+-----------------------------------------------------------+
 | PYPY_MULTIARCH         | pypy 3.7+: ends up in ``sys.platform._multiarch``         |
-|                        | on posix                                                  |
+|                        | on posix, defaults to ``x86_64-linux-gnu``                |
 +------------------------+-----------------------------------------------------------+
 | PYPY_USESSION_DIR      | base directory for temporary files, usually ``$TMP``      |
 +------------------------+-----------------------------------------------------------+
@@ -209,7 +207,7 @@ are shorthand for::
 
     pypy ../../rpython/bin/rpython <rpython options> targetpypystandalone.py <pypy options>
 
-More help is availabe via ``--help`` at either option position, and more info
+More help is available via ``--help`` at either option position, and more info
 can be found in the :doc:`config/index` section.
 
 (You can use ``python`` instead of ``pypy`` here, which will take longer
@@ -218,7 +216,7 @@ but works too.)
 If everything works correctly this will:
 
 1. Run the rpython `translation chain`_, producing a database of the
-   entire pypy interpreter. This step is currently singe threaded, and RAM
+   entire pypy interpreter. This step is currently single threaded, and RAM
    hungry. As part of this step,  the chain creates a large number of C code
    files and a Makefile to compile them in a
    directory controlled by the ``PYPY_USESSION_DIR`` environment variable.
@@ -273,45 +271,24 @@ imported the first time.
 
 ::
 
-    cd pypy/tool/release
-    ./package.py --archive-name=pypy-VER-PLATFORM
+    python pypy/tool/release/package.py --archive-name=pypy-VER-PLATFORM
 
 This creates a clean and prepared hierarchy, as well as a ``.tar.bz2``
-with the same content; both are found by default in
-``/tmp/usession-YOURNAME/build/``.  You can then either move the file
-hierarchy or unpack the ``.tar.bz2`` at the correct place.
+with the same content; the directory to find these will be printed out.  You
+can then either move the file hierarchy or unpack the ``.tar.bz2`` at the
+correct place.
 
 It is recommended to use package.py because custom scripts will
 invariably become out-of-date.  If you want to write custom scripts
 anyway, note an easy-to-miss point: some modules are written with CFFI,
 and require some compilation.  If you install PyPy as root without
-pre-compiling them, normal users will get errors:
-
-* PyPy 2.5.1 or earlier: normal users would see permission errors.
-  Installers need to run ``pypy -c "import gdbm"`` and other similar
-  commands at install time; the exact list is in
-  :source:`pypy/tool/release/package.py`.  Users
-  seeing a broken installation of PyPy can fix it after-the-fact if they
-  have sudo rights, by running once e.g. ``sudo pypy -c "import gdbm``.
-
-* PyPy 2.6 and later: anyone would get ``ImportError: no module named
-  _gdbm_cffi``.  Installers need to run ``pypy _gdbm_build.py`` in the
-  ``lib_pypy`` directory during the installation process (plus others;
-  see the exact list in :source:`pypy/tool/release/package.py`).
-  Users seeing a broken
-  installation of PyPy can fix it after-the-fact, by running ``pypy
-  /path/to/lib_pypy/_gdbm_build.py``.  This command produces a file
-  called ``_gdbm_cffi.pypy-41.so`` locally, which is a C extension
-  module for PyPy.  You can move it at any place where modules are
-  normally found: e.g. in your project's main directory, or in a
-  directory that you add to the env var ``PYTHONPATH``.
-
+pre-compiling them, normal users will get errors.
 
 Installation
 ------------
 
 PyPy dynamically finds the location of its libraries depending on the location
-of the executable. The directory hierarchy of a typical PyPy installation
+of the executable. The directory hierarchy of a typical PyPy2 installation
 looks like this::
 
     ./bin/pypy
@@ -320,10 +297,16 @@ looks like this::
     ./lib-python/2.7
     ./site-packages/
 
+A PyPy3.8+ installation will match the CPython layout::
+
+    ./bin/
+    ./include/pypy3.8/include
+    ./lib/pypy3.8
+
 The hierarchy shown above is relative to a PREFIX directory. PREFIX is
 computed by starting from the directory where the executable resides, and
 "walking up" the filesystem until we find a directory containing ``lib_pypy``
-and ``lib-python/2.7``.
+and ``lib-python/2.7`` (on pypy2).
 
 To install PyPy system wide on unix-like systems, it is recommended to put the
 whole hierarchy alone (e.g. in ``/opt/pypy``) and put a symlink to the

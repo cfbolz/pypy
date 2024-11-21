@@ -10,9 +10,10 @@ a drop-in replacement for the 'socket' module.
 from errno import EINVAL
 from rpython.rlib import _rsocket_rffi as _c, jit, rgc
 from rpython.rlib.buffer import LLBuffer
+from rpython.rlib.unroll import unrolling_iterable
 from rpython.rlib.objectmodel import (
     specialize, instantiate, keepalive_until_here)
-from rpython.rlib.rarithmetic import intmask, r_uint
+from rpython.rlib.rarithmetic import intmask, r_uint, widen
 from rpython.rlib import rthread, rposix
 from rpython.rtyper.lltypesystem import lltype, rffi
 from rpython.rtyper.lltypesystem.rffi import sizeof, offsetof
@@ -471,18 +472,23 @@ if HAS_AF_NETLINK:
 HAVE_SOCK_NONBLOCK = "SOCK_NONBLOCK" in constants
 HAVE_SOCK_CLOEXEC = "SOCK_CLOEXEC" in constants
 
-def familyclass(family):
-    return _FAMILIES.get(family, Address)
-af_get = familyclass
+UNROLLING_FAMILIES = unrolling_iterable(_FAMILIES.items())
+_FAMILIES = None
+
+def instantiate_family(family):
+    for f, cls in UNROLLING_FAMILIES:
+        if widen(f) == widen(family):
+            return instantiate(cls)
+    return instantiate(Address)
 
 def make_address(addrptr, addrlen, result=None):
     family = rffi.cast(lltype.Signed, addrptr.c_sa_family)
     if result is None:
-        result = instantiate(familyclass(family))
+        result = instantiate_family(family)
     elif result.family != family:
         raise RSocketError("address family mismatched")
     # copy into a new buffer the address that 'addrptr' points to
-    addrlen = rffi.cast(lltype.Signed, addrlen)
+    addrlen = rffi.cast(lltype.Signed, intmask(addrlen))
     buf = lltype.malloc(rffi.CCHARP.TO, addrlen, flavor='raw',
                         track_allocation=False)
     src = rffi.cast(rffi.CCHARP, addrptr)
@@ -504,23 +510,25 @@ def makeipv4addr(s_addr, result=None):
     return result
 
 def make_null_address(family):
-    klass = familyclass(family)
-    result = instantiate(klass)
-    buf = lltype.malloc(rffi.CCHARP.TO, klass.maxlen, flavor='raw', zero=True,
+    result = instantiate_family(family)
+    buf = lltype.malloc(rffi.CCHARP.TO, result.maxlen, flavor='raw', zero=True,
                         track_allocation=False)
     # Initialize the family to the correct value.  Avoids surprizes on
     # Windows when calling a function that unexpectedly does not set
     # the output address (e.g. recvfrom() on a connected IPv4 socket).
     rffi.setintfield(rffi.cast(_c.sockaddr_ptr, buf), 'c_sa_family', family)
     result.setdata(buf, 0)
-    return result, klass.maxlen
+    return result, result.maxlen
 
 # ____________________________________________________________
+
+# On windows, _c.INVALID_SOCKET is unsigned
+INVALID_SOCKET = rffi.cast(lltype.Signed, _c.INVALID_SOCKET)
 
 class RSocket(object):
     """RPython-level socket object.
     """
-    fd = _c.INVALID_SOCKET
+    fd = INVALID_SOCKET
     family = 0
     type = 0
     proto = 0
@@ -535,7 +543,7 @@ class RSocket(object):
                 # SOCK_CLOEXEC, which may fail.  If we get EINVAL,
                 # then we fall back to the SOCK_CLOEXEC-less case.
                 fd = _c.socket(family, type | SOCK_CLOEXEC, proto)
-                if fd < 0:
+                if widen(fd) < 0:
                     if _c.geterrno() == EINVAL:
                         # Linux older than 2.6.27 does not support
                         # SOCK_CLOEXEC.  An EINVAL might be caused by
@@ -550,7 +558,7 @@ class RSocket(object):
                 if not inheritable:
                     sock_set_inheritable(fd, False)
         # PLAT RISCOS
-        self.fd = fd
+        self.fd = rffi.cast(lltype.Signed, fd)
         self.family = family
         self.type = type
         if HAVE_SOCK_CLOEXEC:
@@ -571,8 +579,8 @@ class RSocket(object):
     @rgc.must_be_light_finalizer
     def __del__(self):
         fd = self.fd
-        if fd != _c.INVALID_SOCKET:
-            self.fd = _c.INVALID_SOCKET
+        if widen(fd) != INVALID_SOCKET:
+            self.fd = INVALID_SOCKET
             _c.socketclose_no_errno(fd)
 
     if hasattr(_c, 'fcntl'):
@@ -601,7 +609,7 @@ class RSocket(object):
         def _select(self, for_writing):
             """Returns 0 when reading/writing is possible,
             1 when timing out and -1 on error."""
-            if self.timeout <= 0.0 or self.fd == _c.INVALID_SOCKET:
+            if self.timeout <= 0.0 or widen(self.fd) == INVALID_SOCKET:
                 # blocking I/O or no socket.
                 return 0
             pollfd = rffi.make(_c.pollfd)
@@ -627,7 +635,7 @@ class RSocket(object):
             """Returns 0 when reading/writing is possible,
             1 when timing out and -1 on error."""
             timeout = self.timeout
-            if timeout <= 0.0 or self.fd == _c.INVALID_SOCKET:
+            if timeout <= 0.0 or widen(self.fd) == INVALID_SOCKET:
                 # blocking I/O or no socket.
                 return 0
             tv = rffi.make(_c.timeval)
@@ -638,10 +646,11 @@ class RSocket(object):
             _c.FD_ZERO(fds)
             _c.FD_SET(self.fd, fds)
             null = lltype.nullptr(_c.fd_set.TO)
+            fd1 = widen(self.fd) + 1
             if for_writing:
-                n = _c.select(self.fd + 1, null, fds, null, tv)
+                n = _c.select(fd1, null, fds, null, tv)
             else:
-                n = _c.select(self.fd + 1, fds, null, null, tv)
+                n = _c.select(fd1, fds, null, null, tv)
             lltype.free(fds, flavor='raw')
             lltype.free(tv, flavor='raw')
             if n < 0:
@@ -689,7 +698,9 @@ class RSocket(object):
             raise self.error_handler()
         if remove_inheritable:
             sock_set_inheritable(newfd, False)
-        address.addrlen = rffi.cast(lltype.Signed, addrlen)
+        address.addrlen = rffi.cast(lltype.Signed, intmask(addrlen))
+        if _c._WIN32:
+            newfd = rffi.cast(lltype.Signed, newfd)
         return (newfd, address)
 
     def bind(self, address):
@@ -703,15 +714,15 @@ class RSocket(object):
     def close(self):
         """Close the socket.  It cannot be used after this call."""
         fd = self.fd
-        if fd != _c.INVALID_SOCKET:
-            self.fd = _c.INVALID_SOCKET
+        if widen(fd) != INVALID_SOCKET:
+            self.fd = INVALID_SOCKET
             res = _c.socketclose(fd)
             if res != 0:
                 raise self.error_handler()
 
     def detach(self):
         fd = self.fd
-        self.fd = _c.INVALID_SOCKET
+        self.fd = INVALID_SOCKET
         return fd
 
     if _c.WIN32:
@@ -802,7 +813,7 @@ class RSocket(object):
         def dup(self, SocketClass=None):
             if SocketClass is None:
                 SocketClass = RSocket
-            fd = _c.dup(self.fd)
+            fd = rffi.cast(lltype.Signed, _c.dup(self.fd))
             if fd < 0:
                 raise self.error_handler()
             return make_socket(fd, self.family, self.type, self.proto,
@@ -820,7 +831,7 @@ class RSocket(object):
             address.unlock()
         if res < 0:
             raise self.error_handler()
-        address.addrlen = rffi.cast(lltype.Signed, addrlen)
+        address.addrlen = rffi.cast(lltype.Signed, intmask(addrlen))
         return address
 
     @jit.dont_look_inside
@@ -835,7 +846,7 @@ class RSocket(object):
             address.unlock()
         if res < 0:
             raise self.error_handler()
-        address.addrlen = rffi.cast(lltype.Signed, addrlen)
+        address.addrlen = rffi.cast(lltype.Signed, intmask(addrlen))
         return address
 
     @jit.dont_look_inside
@@ -912,6 +923,10 @@ class RSocket(object):
         with rffi.scoped_alloc_buffer(buffersize) as buf:
             llbuf = LLBuffer(buf.raw, buffersize)
             read_bytes = self.recvinto(llbuf, buffersize, flags)
+            if _c.linux and flags & _c.MSG_TRUNC and read_bytes > buffersize:
+                # on linux, if MSG_TRUNC is given, read_bytes is the size of
+                # the packet, not the amounts of bytes written into buf
+                read_bytes = buffersize
             return buf.str(read_bytes)
 
     def recvinto(self, rwbuffer, nbytes, flags=0):
@@ -978,10 +993,10 @@ class RSocket(object):
         self.wait_for_data(False)
         nbuf = len(buffers)
         address, addr_p, addrlen_p = self._addrbuf()
-        message_lengths = lltype.malloc(rffi.INTP.TO, nbuf, flavor='raw')
+        message_lengths = lltype.malloc(rffi.INT_realP.TO, nbuf, flavor='raw')
         messages = lltype.malloc(rffi.CCHARPP.TO, nbuf, flavor='raw')
         for i in range(nbuf):
-            message_lengths[i] = rffi.cast(rffi.INT, buffers[i].getlength())
+            message_lengths[i] = rffi.cast(rffi.INT_real, buffers[i].getlength())
             messages[i] = buffers[i].get_raw_address()
         size_of_anc = lltype.malloc(rffi.SIGNEDP.TO, 1, flavor='raw')
         size_of_anc[0] = rffi.cast(rffi.SIGNED, 0)
@@ -1452,6 +1467,7 @@ if _c.WIN32:
             result = _c.WSASocket(
                 _c.FROM_PROTOCOL_INFO, _c.FROM_PROTOCOL_INFO,
                 _c.FROM_PROTOCOL_INFO, info, 0, 0)
+            result = rffi.cast(lltype.Signed, result)
             if result == INVALID_SOCKET:
                 raise last_error()
             return result
@@ -1763,7 +1779,7 @@ if hasattr(_c, 'inet_ntop'):
                                    dstbuf, dstsize)
                 if not res:
                     raise last_error()
-                return rffi.charp2str(res)
+                return rffi.constcharp2str(res)
             finally:
                 lltype.free(dstbuf, flavor='raw')
 
@@ -1781,3 +1797,18 @@ if hasattr(_c, 'sethostname'):
             res = _c.sethostname(buf, len(hostname))
             if res < 0:
                 raise last_error()
+
+def if_nameindex():
+    if_nameindex_s_ptr = _c.if_nameindex()
+    if not if_nameindex_s_ptr:
+        raise last_error()
+    if_nameindex_arr = rffi.cast(rffi.CArrayPtr(_c.if_nameindex_s), if_nameindex_s_ptr)
+    out = []
+    i = 0
+    while 1:
+        v = if_nameindex_arr[i]
+        if not v.c_if_name:
+            break
+        out.append((v.c_if_index, rffi.charp2str(v.c_if_name)))
+        i += 1
+    return out 

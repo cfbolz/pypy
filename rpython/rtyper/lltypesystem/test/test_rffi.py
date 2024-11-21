@@ -19,6 +19,8 @@ from rpython.flowspace.model import summary
 from rpython.translator.tool.cbuild import ExternalCompilationInfo
 from rpython.rlib.rarithmetic import r_singlefloat
 
+PYPY_HOST = '__pypy__' in sys.modules
+
 class BaseTestRffi:
     def test_basic(self):
         c_source = py.code.Source("""
@@ -28,7 +30,8 @@ class BaseTestRffi:
         }
         """)
 
-        eci = ExternalCompilationInfo(separate_module_sources=[c_source])
+        eci = ExternalCompilationInfo(separate_module_sources=[c_source],
+                                      pre_include_bits=("int someexternalfunction(int);",))
         z = llexternal('someexternalfunction', [Signed], Signed,
                        compilation_info=eci)
 
@@ -89,7 +92,7 @@ class BaseTestRffi:
         assert xf() == 3
 
     def test_unicode(self):
-        eci = ExternalCompilationInfo(includes=['string.h'])
+        eci = ExternalCompilationInfo(includes=['string.h', 'wchar.h'])
         z = llexternal('wcslen', [CWCHARP], Signed, compilation_info=eci)
 
         def f():
@@ -200,7 +203,8 @@ class BaseTestRffi:
             return (l);
         }
         """
-        eci = ExternalCompilationInfo(separate_module_sources=[c_source])
+        eci = ExternalCompilationInfo(separate_module_sources=[c_source],
+                                      pre_include_bits=('int f(char**);',))
         z = llexternal('f', [CCHARPP], Signed, compilation_info=eci)
 
         def f():
@@ -222,6 +226,7 @@ class BaseTestRffi:
            char two;
            int three;
         };
+        int f(struct xx*);
         #endif
         """
         h_file = udir.join("structxx.h")
@@ -284,7 +289,7 @@ class BaseTestRffi:
 
     def test_extra_include_dirs(self):
         udir.ensure("incl", dir=True)
-        udir.join("incl", "incl.h").write("#define C 3")
+        udir.join("incl", "incl.h").write("#define C 3\nint fun();")
         c_source = py.code.Source("""
         #include <incl.h>
         int fun ()
@@ -320,6 +325,7 @@ class BaseTestRffi:
         struct stuff {
            char data[38];
         };
+        char get(struct stuff *);
         #endif /* _OPAQUE_H */
         """)
 
@@ -934,6 +940,7 @@ def test_enforced_args():
     mixann.getgraph(f2, [], s_None)
     mixann.finish()
 
+@py.test.mark.skipif(PYPY_HOST, reason="ll2ctypes cannot do this cast on PyPy2")
 def test_force_cast_unichar():
     x = cast(lltype.UniChar, -1)
     assert isinstance(x, unicode)
@@ -945,7 +952,7 @@ def test_force_cast_unichar():
 def test_c_memcpy():
     p1 = str2charp("hello")
     p2 = str2charp("WORLD")
-    c_memcpy(cast(VOIDP, p2), cast(VOIDP, p1), 3)
+    c_memcpy(cast(VOIDP, p2), cast(CONST_VOIDP, p1), 3)
     assert charp2str(p1) == "hello"
     assert charp2str(p2) == "helLD"
     free_charp(p1)

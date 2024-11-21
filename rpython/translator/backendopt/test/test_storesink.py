@@ -1,5 +1,6 @@
 
 import py
+from rpython.rlib.nonconst import NonConstant
 from rpython.translator.translator import TranslationContext, graphof
 from rpython.translator.backendopt.storesink import storesink_graph
 from rpython.translator.backendopt import removenoops
@@ -165,3 +166,48 @@ class TestStoreSink(object):
 
         self.check(f, [int], 0)
 
+    def test_debug_assert_not_none(self):
+        from rpython.rlib.debug import ll_assert_not_none
+        class A(object):
+            pass
+
+        def g(i):
+            if i:
+                return None
+            else:
+                return A()
+
+        def f(i):
+            a1 = g(i)
+            a = A()
+            a.x = i
+            ll_assert_not_none(a1)
+            return a.x
+
+        self.check(f, [int], 0)
+
+    def test_read_none_field_bug(self):
+        from rpython.translator.backendopt import inline, constfold
+        class A(object):
+            _immutable_fields_ = ['next']
+
+        def g(i):
+            if i == 1:
+                return None
+            a = A()
+            a.next = 12 * i
+            return a
+
+        def f(i):
+            g(i)
+            a = g(1)
+            return a.next
+
+        t = self.translate(f, [int])
+        graph = graphof(t, f)
+        inline.auto_inline_graphs(t, [graph, graphof(t, g)], 100)
+        constfold.constant_fold_graph(graph)
+        removenoops.remove_same_as(graph)
+        checkgraph(graph)
+        storesink_graph(graph)
+        checkgraph(graph)

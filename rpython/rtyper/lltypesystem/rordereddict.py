@@ -202,7 +202,7 @@ class OrderedDictRepr(AbstractDictRepr):
             key_repr = self._key_repr_computer()
             self.external_key_repr, self.key_repr = self.pickkeyrepr(key_repr)
         if 'value_repr' not in self.__dict__:
-            self.external_value_repr, self.value_repr = self.pickrepr(self._value_repr_computer())
+            self.external_value_repr, self.value_repr = rmodel.externalvsinternal(self.rtyper, self._value_repr_computer(), gcref=True)
         if isinstance(self.DICT, lltype.GcForwardReference):
             DICTKEY = self.key_repr.lowleveltype
             DICTVALUE = self.value_repr.lowleveltype
@@ -315,12 +315,16 @@ class OrderedDictRepr(AbstractDictRepr):
         hop.exception_cannot_occur()
         hop.gendirectcall(ll_prepare_dict_update, v_dict, v_num)
 
-    def _rtype_method_kvi(self, hop, ll_func):
+    def _rtype_method_kvi(self, hop, ll_func, extraarg=None):
         v_dic, = hop.inputargs(self)
         r_list = hop.r_result
         cLIST = hop.inputconst(lltype.Void, r_list.lowleveltype.TO)
         hop.exception_cannot_occur()
-        return hop.gendirectcall(ll_func, cLIST, v_dic)
+        if extraarg:
+            c_extraarg = hop.inputconst(lltype.Void, extraarg)
+        else:
+            c_extraarg = hop.inputconst(lltype.Void, None)
+        return hop.gendirectcall(ll_func, cLIST, v_dic, c_extraarg)
 
     def rtype_method_keys(self, hop):
         return self._rtype_method_kvi(hop, ll_dict_keys)
@@ -329,7 +333,8 @@ class OrderedDictRepr(AbstractDictRepr):
         return self._rtype_method_kvi(hop, ll_dict_values)
 
     def rtype_method_items(self, hop):
-        return self._rtype_method_kvi(hop, ll_dict_items)
+        EXTERNAL_ELEM = hop.r_result.external_item_repr.lowleveltype
+        return self._rtype_method_kvi(hop, ll_dict_items, EXTERNAL_ELEM)
 
     def rtype_bltn_list(self, hop):
         return self._rtype_method_kvi(hop, ll_dict_keys)
@@ -719,6 +724,10 @@ def _ll_dict_insert_no_index(d, key, value):
     rc = d.resize_counter - 3
     d.resize_counter = rc
 
+@jit.dont_look_inside
+def ll_len_of_d_indexes(d):
+    return _ll_len_of_d_indexes(d)
+
 def _ll_len_of_d_indexes(d):
     # xxx Haaaack: returns len(d.indexes).  Works independently of
     # the exact type pointed to by d, using a forced cast...
@@ -921,6 +930,7 @@ def ll_ensure_indexes(d):
         ll_assert((num & FUNC_MASK) != FUNC_MUST_REINDEX,
                   "bad combination in lookup_function_no")
 
+@jit.look_inside_iff(lambda d: jit.isvirtual(d))
 def ll_dict_create_initial_index(d):
     """Create the initial index for a dictionary.  The common case is
     that 'd' is empty.  The uncommon case is that it is a prebuilt
@@ -1279,8 +1289,14 @@ def ll_dict_setdefault(dict, key, default):
     else:
         return dict.entries[index].value
 
+@jit.look_inside_iff(lambda dict: jit.isvirtual(dict))
 def ll_dict_copy(dict):
-    ll_ensure_indexes(dict)
+    # we never have to reindex while jitting, because dict is virtual
+    if not jit.we_are_jitted():
+        ll_ensure_indexes(dict)
+    else:
+        num = dict.lookup_function_no
+        assert (num & FUNC_MASK) != FUNC_MUST_REINDEX
 
     DICT = lltype.typeOf(dict).TO
     newdict = DICT.allocate()
@@ -1296,9 +1312,37 @@ def ll_dict_copy(dict):
     rgc.ll_arraycopy(dict.entries, newdict.entries, 0, 0,
                      newdict.num_ever_used_items)
 
-    ll_dict_reindex(newdict, _ll_len_of_d_indexes(dict))
+    fun = dict.lookup_function_no & FUNC_MASK
+    if fun == FUNC_BYTE:
+        indexes = lltype.cast_opaque_ptr(DICTINDEX_BYTE, dict.indexes)
+        n = len(indexes)
+        newindexes = lltype.malloc(DICTINDEX_BYTE.TO, n, zero=True)
+        rgc.ll_arraycopy(indexes, newindexes, 0, 0, n)
+        newdict.indexes = lltype.cast_opaque_ptr(llmemory.GCREF, newindexes)
+        newdict.lookup_function_no = FUNC_BYTE
+    elif fun == FUNC_SHORT:
+        indexes = lltype.cast_opaque_ptr(DICTINDEX_SHORT, dict.indexes)
+        n = len(indexes)
+        newindexes = lltype.malloc(DICTINDEX_SHORT.TO, n, zero=True)
+        rgc.ll_arraycopy(indexes, newindexes, 0, 0, n)
+        newdict.indexes = lltype.cast_opaque_ptr(llmemory.GCREF, newindexes)
+        newdict.lookup_function_no = FUNC_SHORT
+    elif IS_64BIT and fun == FUNC_INT:
+        indexes = lltype.cast_opaque_ptr(DICTINDEX_INT, dict.indexes)
+        n = len(indexes)
+        newindexes = lltype.malloc(DICTINDEX_INT.TO, n, zero=True)
+        rgc.ll_arraycopy(indexes, newindexes, 0, 0, n)
+        newdict.indexes = lltype.cast_opaque_ptr(llmemory.GCREF, newindexes)
+        newdict.lookup_function_no = FUNC_INT
+    else:
+        indexes = lltype.cast_opaque_ptr(DICTINDEX_LONG, dict.indexes)
+        n = len(indexes)
+        newindexes = lltype.malloc(DICTINDEX_LONG.TO, n, zero=True)
+        rgc.ll_arraycopy(indexes, newindexes, 0, 0, n)
+        newdict.indexes = lltype.cast_opaque_ptr(llmemory.GCREF, newindexes)
+        newdict.lookup_function_no = FUNC_LONG
+    newdict.resize_counter = dict.resize_counter
     return newdict
-ll_dict_copy.oopspec = 'odict.copy(dict)'
 
 def ll_dict_clear(d):
     if d.num_ever_used_items == 0:
@@ -1317,6 +1361,7 @@ def ll_dict_clear(d):
     # old_entries.delete() XXX
 ll_dict_clear.oopspec = 'odict.clear(d)'
 
+@jit.look_inside_iff(lambda dic1, dic2: jit.isvirtual(dic1) and jit.isvirtual(dic2))
 def ll_dict_update(dic1, dic2):
     if dic1 == dic2:
         return
@@ -1333,7 +1378,6 @@ def ll_dict_update(dic1, dic2):
             index = dic1.lookup_function(dic1, key, hash, FLAG_STORE)
             _ll_dict_setitem_lookup_done(dic1, key, value, hash, index)
         i += 1
-ll_dict_update.oopspec = 'odict.update(dic1, dic2)'
 
 def ll_prepare_dict_update(d, num_extra):
     # Prescale 'd' for 'num_extra' items, assuming that most items don't
@@ -1358,29 +1402,34 @@ def ll_prepare_dict_update(d, num_extra):
 # and very efficient functions are created.
 
 def recast(P, v):
+    # XXX this function is a terrible hack
+    if P is llmemory.GCREF:
+        return lltype.cast_opaque_ptr(llmemory.GCREF, v)
+    if lltype.typeOf(v) is llmemory.GCREF:
+        return lltype.cast_opaque_ptr(P, v)
     if isinstance(P, lltype.Ptr):
         return lltype.cast_pointer(P, v)
     else:
         return v
 
 def _make_ll_keys_values_items(kind):
-    def ll_kvi(LIST, dic):
+    def ll_kvi(LIST, dic, EXTERNAL_ELEM=None):
         res = LIST.ll_newlist(dic.num_live_items)
         entries = dic.entries
         dlen = dic.num_ever_used_items
         items = res.ll_items()
+        ELEM = lltype.typeOf(items).TO.OF
         i = 0
         p = 0
         while i < dlen:
             if entries.valid(i):
-                ELEM = lltype.typeOf(items).TO.OF
                 if ELEM is not lltype.Void:
                     entry = entries[i]
                     if kind == 'items':
-                        r = lltype.malloc(ELEM.TO)
-                        r.item0 = recast(ELEM.TO.item0, entry.key)
-                        r.item1 = recast(ELEM.TO.item1, entry.value)
-                        items[p] = r
+                        r = lltype.malloc(EXTERNAL_ELEM.TO)
+                        r.item0 = recast(EXTERNAL_ELEM.TO.item0, entry.key)
+                        r.item1 = recast(EXTERNAL_ELEM.TO.item1, entry.value)
+                        items[p] = recast(ELEM, r)
                     elif kind == 'keys':
                         items[p] = recast(ELEM, entry.key)
                     elif kind == 'values':
@@ -1389,7 +1438,8 @@ def _make_ll_keys_values_items(kind):
             i += 1
         assert p == res.ll_length()
         return res
-    ll_kvi.oopspec = 'odict.%s(dic)' % kind
+    if kind != "items":
+        ll_kvi.oopspec = 'odict.%s(dic)' % kind
     return ll_kvi
 
 ll_dict_keys   = _make_ll_keys_values_items('keys')

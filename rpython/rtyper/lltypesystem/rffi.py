@@ -77,7 +77,8 @@ def llexternal(name, args, result, _callable=None,
                _nowrapper=False, calling_conv=None,
                elidable_function=False, macro=None,
                random_effects_on_gcobjs='auto',
-               save_err=RFFI_ERR_NONE):
+               save_err=RFFI_ERR_NONE,
+               natural_arity=-1):
     """Build an external function that will invoke the C function 'name'
     with the given 'args' types and 'result' type.
 
@@ -101,6 +102,9 @@ def llexternal(name, args, result, _callable=None,
                   by the JIT.  If 'c', it can be seen (depending on
                   releasegil=False).  For tests only, or if _nowrapper,
                   it defaults to 'c'.
+
+    natural_arity: on platforms where it matters, you have to provide the natural
+                   arity for variadic calls. Important examples are OS X on M1
     """
     if calling_conv is None:
         if sys.platform == 'win32' and not _nowrapper:
@@ -118,7 +122,8 @@ def llexternal(name, args, result, _callable=None,
                 name, macro, ext_type, compilation_info)
         else:
             _callable = ll2ctypes.LL2CtypesCallable(ext_type,
-                'c' if calling_conv == 'unknown' else calling_conv)
+                'c' if calling_conv == 'unknown' else calling_conv,
+                natural_arity)
     else:
         assert macro is None, "'macro' is useless if you specify '_callable'"
     if elidable_function:
@@ -163,6 +168,7 @@ def llexternal(name, args, result, _callable=None,
                                  random_effects_on_gcobjs=
                                      random_effects_on_gcobjs,
                                  calling_conv=calling_conv,
+                                 natural_arity=natural_arity,
                                  **kwds)
     if isinstance(_callable, ll2ctypes.LL2CtypesCallable):
         _callable.funcptr = funcptr
@@ -216,8 +222,9 @@ def llexternal(name, args, result, _callable=None,
         #
         # '_call_aroundstate_target_' is used by the JIT to generate a
         # CALL_RELEASE_GIL directly to 'funcptr'.  This doesn't work if
-        # 'funcptr' might be a C macro, though.
-        if macro is None:
+        # 'funcptr' might be a C macro, though. We also can't do variadic
+        # calls
+        if macro is None and natural_arity == -1:
             call_external_function._call_aroundstate_target_ = funcptr, save_err
         #
         call_external_function = func_with_new_name(call_external_function,
@@ -229,6 +236,7 @@ def llexternal(name, args, result, _callable=None,
         # the low-level function pointer carelessly
         # ...well, unless it's a macro, in which case we still have
         # to hide it from the JIT...
+
         need_wrapper = (macro is not None or save_err != RFFI_ERR_NONE)
         # ...and unless we're on Windows and the calling convention is
         # 'win' or 'unknown'
@@ -571,6 +579,10 @@ r_int_real = rarithmetic.build_int("r_int_real", r_int.SIGN, r_int.BITS, True)
 INT_real = lltype.build_number("INT", r_int_real)
 platform.numbertype_to_rclass[INT_real] = r_int_real
 NUMBER_TYPES.append(INT_real)
+r_uint_real = rarithmetic.build_int("r_uint_real", r_uint.SIGN, r_uint.BITS, True)
+UINT_real = lltype.build_number("UINT", r_uint_real)
+platform.numbertype_to_rclass[UINT_real] = r_uint_real
+NUMBER_TYPES.append(UINT_real)
 
 # ^^^ this creates at least the following names:
 # --------------------------------------------------------------------
@@ -686,7 +698,7 @@ def CExternVariable(TYPE, name, eci, _CConstantClass=CConstant,
     getter_name = 'get_' + name
     setter_name = 'set_' + name
     getter_prototype = (
-       "RPY_EXTERN %(c_type)s %(getter_name)s ();" % locals())
+       "RPY_EXTERN %(c_type)s %(getter_name)s (void);" % locals())
     setter_prototype = (
        "RPY_EXTERN void %(setter_name)s (%(c_type)s v);" % locals())
     c_getter = "%(c_type)s %(getter_name)s () { return %(name)s; }" % locals()
@@ -732,6 +744,7 @@ r_singlefloat = rarithmetic.r_singlefloat
 
 # void *   - for now, represented as char *
 VOIDP = lltype.Ptr(lltype.Array(lltype.Char, hints={'nolength': True, 'render_as_void': True}))
+CONST_VOIDP = lltype.Ptr(lltype.Array(lltype.Char, hints={'nolength': True, 'render_as_void': True, 'render_as_const': True}))
 NULL = None
 
 # void **
@@ -749,6 +762,7 @@ CWCHARP = lltype.Ptr(lltype.Array(lltype.UniChar, hints={'nolength': True}))
 
 # int *, unsigned int *, etc.
 #INTP = ...    see setup() above
+INT_realP = lltype.Ptr(lltype.Array(INT_real, hints={'nolength': True}))
 
 # double *
 DOUBLEP = lltype.Ptr(lltype.Array(DOUBLE, hints={'nolength': True}))
@@ -838,6 +852,16 @@ def make_string_mappings(strtype):
     # char* -> str
     # doesn't free char*
     def charp2str(cp):
+        if not we_are_translated():
+            res = []
+            size = 0
+            while True:
+                c = cp[size]
+                if c == lastchar:
+                    return assert_str0("".join(res))
+                res.append(c)
+                size += 1
+
         size = 0
         while cp[size] != lastchar:
             size += 1
@@ -1032,6 +1056,7 @@ def make_string_mappings(strtype):
  ) = make_string_mappings(unicode)
 
 
+
 def constcharp2str(cp):
     """
     Like charp2str, but takes a CONST_CCHARP instead
@@ -1049,13 +1074,13 @@ def constcharpsize2str(cp, size):
     return charpsize2str(cp, size)
 constcharpsize2str._annenforceargs_ = [lltype.SomePtr(CONST_CCHARP), int]
 
-def str2constcharp(s):
+def str2constcharp(s, track_allocation=True):
     """
     Like str2charp, but returns a CONST_CCHARP instead
     """
-    cp = str2charp(s)
+    cp = str2charp(s, track_allocation)
     return cast(CONST_CCHARP, cp)
-str2constcharp._annenforceargs_ = [str]
+str2constcharp._annenforceargs_ = [str, bool]
 
 @not_rpython
 def _deprecated_get_nonmovingbuffer(*args):
@@ -1112,11 +1137,15 @@ def wcharp2utf8n(w, maxlen):
 
 def utf82wcharp(utf8, utf8len, track_allocation=True):
     from rpython.rlib import rutf8
+    if not we_are_translated():
+        assert utf8len == rutf8.codepoints_in_utf8(utf8)
 
+    # add 1 for the \x00, and another for cases where the last utf8 is an
+    # incomplete codepoint
     if track_allocation:
-        w = lltype.malloc(CWCHARP.TO, utf8len + 1, flavor='raw', track_allocation=True)
+        w = lltype.malloc(CWCHARP.TO, utf8len + 2, flavor='raw', track_allocation=True)
     else:
-        w = lltype.malloc(CWCHARP.TO, utf8len + 1, flavor='raw', track_allocation=False)
+        w = lltype.malloc(CWCHARP.TO, utf8len + 2, flavor='raw', track_allocation=False)
     index = 0
     for ch in rutf8.Utf8StringIterator(utf8):
         w[index] = unichr(ch)
@@ -1124,6 +1153,32 @@ def utf82wcharp(utf8, utf8len, track_allocation=True):
     w[index] = unichr(0)
     return w
 utf82wcharp._annenforceargs_ = [str, int, bool]
+
+def utf82wcharp_ex(utf8, unilen, track_allocation=True):
+    from rpython.rlib import rutf8
+    # slightly different than utf82wcharp for sizeof(wchar_t) == 2 and
+    # maxunicode==0x10ffff. Very similar to utf8_encode_utf_16_helper
+    # but allocates a buffer, and no error handler. Passes surrogates through.
+    wlen = 0
+    for ch in rutf8.Utf8StringIterator(utf8):
+        if ch > 0xffff:
+            wlen += 1
+        wlen += 1
+    w = lltype.malloc(CWCHARP.TO, wlen + 3, flavor='raw',
+                      track_allocation=track_allocation)
+    index = 0
+    for ch in rutf8.Utf8StringIterator(utf8):
+        if ch > 0xffff:
+            w[index] = unichr(0xD800 | ((ch - 0x10000) >> 10))
+            index += 1
+            w[index] = unichr(0xDC00 | ((ch - 0x10000) & 0x3FF))
+        else:
+            w[index] = unichr(ch)
+        index += 1
+    w[index] = unichr(0)
+    assert wlen == index
+    return w
+utf82wcharp_ex._annenforceargs_ = [str, int, bool]
 
 # char**
 CCHARPP = lltype.Ptr(lltype.Array(CCHARP, hints={'nolength': True}))
@@ -1352,11 +1407,14 @@ class scoped_unicode2wcharp:
             free_wcharp(self.buf)
 
 class scoped_utf82wcharp:
-    def __init__(self, value, unicode_len):
-        if value is not None:
-            self.buf = utf82wcharp(value, unicode_len)
-        else:
+    def __init__(self, value, unicode_len=-1):
+        from rpython.rlib import rutf8
+        if value is None:
             self.buf = lltype.nullptr(CWCHARP.TO)
+        elif unicode_len < 0:
+            self.buf = utf82wcharp(value, rutf8.codepoints_in_utf8(value))
+        else:
+            self.buf = utf82wcharp(value, unicode_len)
     def __enter__(self):
         return self.buf
     def __exit__(self, *args):
@@ -1431,10 +1489,24 @@ class scoped_alloc_unicodebuffer:
         return unicode_from_buffer(self.raw, self.gc_buf, self.case_num,
                                    self.size, length)
 
+class scoped_alloc_utf8buffer:
+    def __init__(self, size):
+        self.size = size
+    def __enter__(self):
+        self.raw, self.gc_buf, self.case_num = alloc_unicodebuffer(self.size)
+        return self
+    def __exit__(self, *args):
+        keep_unicodebuffer_alive_until_here(self.raw, self.gc_buf, self.case_num)
+    def str(self, length):
+        # XXX implement me!!!
+        return utf8_from_buffer(self.raw, self.gc_buf, self.case_num,
+                                   self.size, length)
+
+
 # You would have to have a *huge* amount of data for this to block long enough
 # to be worth it to release the GIL.
 c_memcpy = llexternal("memcpy",
-            [VOIDP, VOIDP, SIZE_T],
+            [VOIDP, CONST_VOIDP, SIZE_T],
             lltype.Void,
             releasegil=False,
             calling_conv='c',

@@ -120,7 +120,7 @@ class TestPlatform(object):
         assert 'xyz' in res.out
         os.environ['_SOME_VARIABLE_2'] = 'zyz'
         try:
-            res = self.platform.execute('python', ['-c', cmd % 2])
+            res = self.platform.execute(sys.executable, ['-c', cmd % 2])
             assert 'zyz' in res.out
         finally:
             del os.environ['_SOME_VARIABLE_2']
@@ -155,7 +155,7 @@ def test_is_host_build():
 
     assert platform.is_host_build()
     # do we support non-host builds?
-    if machine().startswith('arm'):
+    if sys.platform != 'darwin' and machine().startswith('arm'):
         platform.set_platform('arm', None)
         assert platform.host != platform.platform
         assert not platform.is_host_build()

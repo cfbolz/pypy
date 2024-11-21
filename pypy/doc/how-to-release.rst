@@ -11,11 +11,11 @@ release is tagged, for instance release-pypy3.5-v4.0.1.
 The release version number should be bumped. A micro release increment means
 there were no changes that justify rebuilding c-extension wheels, since
 the wheels are marked with only major.minor version numbers. It is ofen not
-clear what constitues a "major" release verses a "minor" release, the release
+clear what constitutes a "major" release verses a "minor" release, the release
 manager can make that call.
 
 After release, inevitably there are bug fixes. It is the responsibility of
-the commiter who fixes a bug to make sure this fix is on the release branch,
+the committer who fixes a bug to make sure this fix is on the release branch,
 so that we can then create a tagged bug-fix release, which will hopefully
 happen more often than stable releases.
 
@@ -58,7 +58,7 @@ when we do a merge::
 Then, we need to do the same for the 3.x branch::
 
   $ hg up -r py3.5
-  $ hg merge default # this brings the version fo 7.1.0-alpha0
+  $ hg merge default # this brings the version of 7.1.0-alpha0
   $ hg branch release-pypy3.5-v7.x
   $ # edit the version to 7.0.0-final
   $ hg ci
@@ -69,12 +69,24 @@ Then, we need to do the same for the 3.x branch::
 
 To change the version, you need to edit three files:
 
-  - ``module/sys/version.py``
+  - ``module/sys/version.py``: the ``PYPY_VERSION`` should be something like
+    ``(7, 3, 10, "final", 0)`` or ``(7, 3, 9, "candidate", 2)`` for rc2.
 
-  - ``module/cpyext/include/patchlevel.h``
+  - ``module/cpyext/include/patchlevel.h``:  the ``PYPY_VERSION`` should be
+    something like "7.3.10" for the final release or "7.3.10-candidate3" for
+    rc3.
 
   - ``doc/conf.py``
 
+Add tags to the repo. Never change tags once committed: it breaks downstream
+packaging workflows.
+
+  - Make sure the version checks pass (they ensure ``version.py`` and
+    ``patchlevel.h`` agree)
+  - Make sure the tag matches the version in version.py/patchlevel.h. You
+    can run the repackage.sh script without pushing the tags.
+  - Once the repackage script runs, be sure to push the tags ``git push
+    --tags``
 
 Other steps
 -----------
@@ -93,26 +105,17 @@ Other steps
   * update pypy/doc/contributor.rst (and possibly LICENSE)
     pypy/doc/tool/makecontributor.py generates the list of contributors
 
-  * rename pypy/doc/whatsnew_head.rst to whatsnew_VERSION.rst
-    create a fresh whatsnew_head.rst after the release
-    and add the new file to  pypy/doc/index-of-whatsnew.rst
-
-  * rename pypy/doc/whatsnew-pypy3-HEAD.rst to whatsnew-pypy3-VERSION.rst
-    create a fresh whatsnew-pypy3_HEAD.rst after the release
-    and add the new file to  pypy/doc/index-of-whatsnew.rst
-
   * write release announcement pypy/doc/release-VERSION.rst
     The release announcement should contain a direct link to the download page
 
-  * Add the new files to  pypy/doc/index-of-{whatsnew,release-notes}.rst
+  * Add the new files to  pypy/doc/index-of-release-notes.rst
 
 * Build and upload the release tar-balls
 
   * go to pypy/tool/release and run
     ``force-builds.py <release branch>``
     The following JIT binaries should be built, however, we need more buildbots
-    windows, linux-32, linux-64, osx64, armhf-raspberrian, armel,
-    freebsd64 
+    windows-64, linux-32, linux-64, macos_x86_64, macos_arm64, aarch64, s390x
 
   * wait for builds to complete, make sure there are no failures
 

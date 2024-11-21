@@ -48,7 +48,7 @@ def codepoint_at_pos_dont_look_inside(utf8, p):
 
 class W_UnicodeObject(W_Root):
     import_from_mixin(StringMethods)
-    _immutable_fields_ = ['_utf8']
+    _immutable_fields_ = ['_utf8', '_length']
 
     @enforceargs(utf8str=str)
     def __init__(self, utf8str, length):
@@ -106,6 +106,7 @@ class W_UnicodeObject(W_Root):
         return space.text_w(encode_object(space, self, 'ascii', 'strict'))
 
     def utf8_w(self, space):
+        jit.record_known_result(self._length, rutf8._check_utf8, self._utf8, True, 0, -1)
         return self._utf8
 
     def readbuf_w(self, space):
@@ -460,24 +461,57 @@ class W_UnicodeObject(W_Root):
         value = self._utf8
         if not value:
             return self._empty()
+        if tabsize == 0:
+            res, replacements = replace_count(value, '\t', '')
+            if not replacements and type(self) is W_UnicodeObject:
+                return self
+            newlength = self._length - replacements
+            assert res is not None
+            return W_UnicodeObject(res, newlength)
 
         splitted = value.split('\t')
 
         try:
-            if tabsize > 0:
-                ovfcheck(len(splitted) * tabsize)
+            ovfcheck(len(splitted) * tabsize)
         except OverflowError:
             raise oefmt(space.w_OverflowError, "new string is too long")
-        expanded = oldtoken = splitted.pop(0)
-        newlen = self._len() - len(splitted)
+        newlen = self._len() - len(splitted) + 1
+        builder = StringBuilder(len(value))
+        oldtoken = splitted[0]
+        builder.append(oldtoken)
 
-        for token in splitted:
+        for index in range(1, len(splitted)):
+            token = splitted[index]
             dist = self._tabindent(oldtoken, tabsize)
-            expanded += ' ' * dist + token
+            builder.append_multiple_char(' ', dist)
+            builder.append(token)
             newlen += dist
             oldtoken = token
 
-        return W_UnicodeObject(expanded, newlen)
+        return W_UnicodeObject(builder.build(), newlen)
+
+    def _tabindent(self, token, tabsize):
+        if tabsize <= 0:
+            return 0
+        distance = tabsize
+        if token:
+            distance = 0
+            offset = len(token)
+
+            while 1:
+                if token[offset-1] == "\n" or token[offset-1] == "\r":
+                    break
+                distance += 1
+                offset = rutf8.prev_codepoint_pos(token, offset)
+                if offset == 0:
+                    break
+
+            # the same like distance = len(token) - (offset + 1)
+            distance = (tabsize - distance) % tabsize
+            if distance == 0:
+                distance = tabsize
+
+        return distance
 
     _StringMethods_descr_join = descr_join
     def descr_join(self, space, w_list):
@@ -694,9 +728,14 @@ class W_UnicodeObject(W_Root):
     def descr_split(self, space, w_sep=None, maxsplit=-1):
         res = []
         value = self._utf8
+        is_ascii = self.is_ascii()
         if space.is_none(w_sep):
-            res = split(value, maxsplit=maxsplit, isutf8=True)
-            return space.newlist_utf8(res, self.is_ascii())
+            # need two calls, due to the specialization
+            if is_ascii:
+                res = split(value, maxsplit=maxsplit, isutf8=False)
+            else:
+                res = split(value, maxsplit=maxsplit, isutf8=True)
+            return space.newlist_utf8(res, is_ascii)
 
         by = self.convert_arg_to_w_unicode(space, w_sep)._utf8
         if len(by) == 0:
@@ -1101,10 +1140,24 @@ class W_UnicodeObject(W_Root):
     def _strip_none(self, space, left, right):
         "internal function called by str_xstrip methods"
         value = self._utf8
+        lgt = self._len()
+        if self.is_ascii():
+            # in the ascii case we can do even better and do the allocation in
+            # the trace
+            lpos = 0
+            rpos = len(value)
+            if left:
+                lpos = StringMethods._strip_none_bytes_unboxed_left(value)
+            if right:
+                rpos = StringMethods._strip_none_bytes_unboxed_right(value, lpos)
+            return self._utf8_sliced(lpos, rpos, rpos - lpos)
+        return self._strip_none_unboxed(value, lgt, left, right)
 
+    @staticmethod
+    @jit.elidable
+    def _strip_none_unboxed(value, lgt, left, right):
         lpos = 0
         rpos = len(value)
-        lgt = self._len()
 
         if left:
             while lpos < rpos and rutf8.isspace(value, lpos):
@@ -1120,17 +1173,34 @@ class W_UnicodeObject(W_Root):
                 lgt -= 1
 
         assert rpos >= lpos    # annotator hint, don't remove
-        return self._utf8_sliced(lpos, rpos, lgt)
+        assert lpos >= 0
+        assert rpos >= 0
+        return W_UnicodeObject(value[lpos:rpos], lgt)
 
     def _strip(self, space, w_chars, left, right, name='strip'):
         "internal function called by str_xstrip methods"
         value = self._utf8
         chars = self.convert_arg_to_w_unicode(space, w_chars, strict=name)._utf8
 
-        lpos = 0
-        rpos = len(value)
         lgt = self._len()
 
+        if self.is_ascii():
+            # in the ascii case we can do even better and do the allocation in
+            # the trace
+            lpos = 0
+            rpos = len(value)
+            if left:
+                lpos = StringMethods._strip_bytes_unboxed_left(value, chars)
+            if right:
+                rpos = StringMethods._strip_bytes_unboxed_right(value, chars, lpos)
+            return self._utf8_sliced(lpos, rpos, rpos - lpos)
+        return self._strip_unboxed(value, lgt, chars, left, right)
+
+    @staticmethod
+    @jit.elidable
+    def _strip_unboxed(value, lgt, chars, left, right):
+        lpos = 0
+        rpos = len(value)
         if left:
             while lpos < rpos and rutf8.utf8_in_chars(value, lpos, chars):
                 lpos = rutf8.next_codepoint_pos(value, lpos)
@@ -1145,7 +1215,9 @@ class W_UnicodeObject(W_Root):
                 lgt -= 1
 
         assert rpos >= lpos    # annotator hint, don't remove
-        return self._utf8_sliced(lpos, rpos, lgt)
+        assert lpos >= 0
+        assert rpos >= 0
+        return W_UnicodeObject(value[lpos:rpos], lgt)
 
     def descr_getnewargs(self, space):
         return space.newtuple([W_UnicodeObject(self._utf8, self._length)])
@@ -1214,7 +1286,9 @@ def encode_object(space, w_obj, encoding, errors):
         if ((encoding is None and space.sys.defaultencoding == 'utf8') or
              encoding == 'utf-8' or encoding == 'utf8' or encoding == 'UTF-8'):
             utf8 = space.utf8_w(w_obj)
-            if rutf8.has_surrogates(utf8):
+            if isinstance(w_obj, W_UnicodeObject) and w_obj.is_ascii():
+                pass # nothing to do
+            elif rutf8.has_surrogates(utf8):
                 utf8 = rutf8.reencode_utf8_with_surrogates(utf8)
             return space.newbytes(utf8)
         if ((encoding == "latin1" or encoding == "latin-1") and

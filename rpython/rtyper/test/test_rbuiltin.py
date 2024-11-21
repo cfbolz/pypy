@@ -1,5 +1,6 @@
 import math
 import os
+import sys
 
 import py
 
@@ -14,6 +15,8 @@ from rpython.rtyper.test.tool import BaseRtypingTest
 from rpython.tool import udir
 from rpython.translator.translator import graphof
 
+IS_PYPY = "__pypy__" in sys.builtin_module_names
+MACOS = sys.platform == "darwin"
 
 def enum_direct_calls(translator, func):
     graph = graphof(translator, func)
@@ -22,6 +25,15 @@ def enum_direct_calls(translator, func):
             if op.opname == 'direct_call':
                 yield op
 
+
+def skip_if_m1():
+    return True
+    """ Bugs in libffi linked against cpython make ll2ctypes unusable
+    for variadic functions on m1 platform, skip those tests
+    """
+    import platform
+    if MACOS and not IS_PYPY and platform.machine() == 'arm64':
+        py.test.skip("Variadic functions on m1 unsupported on ll2ctypes")
 
 class TestRbuiltin(BaseRtypingTest):
 
@@ -192,6 +204,7 @@ class TestRbuiltin(BaseRtypingTest):
         assert self.ll_to_string(res) == fn()
 
     def test_os_write(self):
+        skip_if_m1()
         tmpdir = str(udir.udir.join("os_write_test"))
         def wr_open(fname):
             fd = os.open(fname, os.O_WRONLY|os.O_CREAT, 0777)
@@ -208,6 +221,7 @@ class TestRbuiltin(BaseRtypingTest):
         py.test.raises(OSError, os.write, fd, "hello world")
 
     def test_os_write_single_char(self):
+        skip_if_m1()
         tmpdir = str(udir.udir.join("os_write_test_char"))
         def wr_open(fname):
             fd = os.open(fname, os.O_WRONLY|os.O_CREAT, 0777)

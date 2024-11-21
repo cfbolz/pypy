@@ -1,5 +1,5 @@
 import py
-from rpython.rlib.jit import JitDriver, hint, set_param
+from rpython.rlib.jit import JitDriver, hint, set_param, Counters
 from rpython.rlib.jit import unroll_safe, dont_look_inside, promote
 from rpython.rlib.objectmodel import we_are_translated
 from rpython.rlib.debug import fatalerror
@@ -8,6 +8,7 @@ from rpython.jit.codewriter.policy import StopAtXPolicy
 from rpython.rtyper.annlowlevel import hlstr
 from rpython.jit.metainterp.warmspot import get_stats
 from rpython.jit.backend.llsupport import codemap
+from rpython.jit.metainterp.jitprof import Profiler
 
 class RecursiveTests:
 
@@ -324,28 +325,36 @@ class RecursiveTests:
                     assert len(op.getdescr()._debug_suboperations) <= length + 5
 
     def test_inline_trace_limit(self):
-        myjitdriver = JitDriver(greens=[], reds=['n'])
-        def recursive(n):
-            if n > 0:
-                return recursive(n - 1) + 1
-            return 0
-        def loop(n):
-            set_param(myjitdriver, "threshold", 10)
+        import sys
+        from rpython.rlib import rstackovf, nonconst
+        sys.setrecursionlimit(3000)
+        myjitdriver = JitDriver(greens=['recurse'], reds=['n'],
+                get_printable_location=lambda recurse: "recurse" if recurse else "loop")
+        def main(recurse, n):
             pc = 0
             while n:
-                myjitdriver.can_enter_jit(n=n)
-                myjitdriver.jit_merge_point(n=n)
-                n = recursive(n)
+                myjitdriver.jit_merge_point(recurse=recurse, n=n)
+                if recurse:
+                    if n > 0:
+                        return main(True, n - 1) + 1
+                    return 0
+                n = main(True, n)
                 n -= 1
+                myjitdriver.can_enter_jit(recurse=recurse, n=n)
             return n
+        def entry(n):
+            set_param(None, "threshold", 10)
+            return main(False, n)
         TRACE_LIMIT = 66
-        res = self.meta_interp(loop, [100], enable_opts='', inline=True, trace_limit=TRACE_LIMIT)
+        res = self.meta_interp(entry, [100], enable_opts='', inline=True, trace_limit=TRACE_LIMIT, max_unroll_recursion=10)
         assert res == 0
         self.check_max_trace_length(TRACE_LIMIT)
         self.check_enter_count_at_most(10) # maybe
-        self.check_aborted_count(6)
+        self.check_aborted_count(1)
 
     def test_trace_limit_bridge(self):
+        # this is a weird test! it has an interp-level recursive function that
+        # goes very deep, that is not save or supported in general
         def recursive(n):
             if n > 0:
                 return recursive(n - 1) + 1
@@ -366,7 +375,7 @@ class RecursiveTests:
         TRACE_LIMIT = 20
         res = self.meta_interp(loop, [100], enable_opts='', inline=True, trace_limit=TRACE_LIMIT)
         self.check_max_trace_length(TRACE_LIMIT)
-        self.check_aborted_count(8)
+        self.check_aborted_count(9)
         self.check_enter_count_at_most(30)
 
     def test_trace_limit_with_exception_bug(self):
@@ -1300,14 +1309,25 @@ class RecursiveTests:
 
     def test_get_unique_id(self):
         lst = []
-        
+
         def reg_codemap(self, (start, size, l)):
             lst.append((start, size))
             old_reg_codemap(self, (start, size, l))
-        
+
+        # Mock `CodemapStorage.free()` because `check_get_unique_id` uses
+        # `codemap.unpack_traceback()`. We mock `CodemapStorage.free()` to
+        # extend the lifetime of the codemap; otherwise, the codemap will be
+        # freed before `meta_interp` returns (p.s. `meta_interp` calls
+        # `cpu.finish_once()`, which calls `cpu.codemap.finish_once()`).
+        saved_codemap_storages = []
+        def free_codemap(self):
+            saved_codemap_storages.append(self)
+
         old_reg_codemap = codemap.CodemapStorage.register_codemap
+        old_free = codemap.CodemapStorage.free
         try:
             codemap.CodemapStorage.register_codemap = reg_codemap
+            codemap.CodemapStorage.free = free_codemap
             def get_unique_id(pc, code):
                 return (code + 1) * 2
 
@@ -1329,51 +1349,50 @@ class RecursiveTests:
             self.check_get_unique_id(lst) # overloaded on assembler backends
         finally:
             codemap.CodemapStorage.register_codemap = old_reg_codemap
+            codemap.CodemapStorage.free = old_free
+            for codemap_storage in saved_codemap_storages:
+                old_free(codemap_storage)
+            saved_codemap_storages = []
 
     def check_get_unique_id(self, lst):
         pass
 
-    def test_huge_trace_without_inlining(self):
-        py.test.skip("fix this!")
-        def p(pc, code):
-            code = hlstr(code)
-            return "%s %d %s" % (code, pc, code[pc])
-        myjitdriver = JitDriver(greens=['pc', 'code'], reds=['n'],
-                                get_printable_location=p,
-                                is_recursive=True)
-
-        def f(code, n):
-            pc = 0
-            while pc < len(code):
-
-                myjitdriver.jit_merge_point(n=n, code=code, pc=pc)
-                op = code[pc]
-                if op == "-":
-                    n -= 1
-                elif op == "c":
-                    f('--------------------', n)
-                elif op == "l":
-                    if n > 0:
-                        myjitdriver.can_enter_jit(n=n, code=code, pc=0)
-                        pc = 0
-                        continue
-                else:
-                    assert 0
-                pc += 1
-            return n
-        def g(m):
-            set_param(None, 'inlining', True)
-            set_param(None, 'trace_limit', 40)
-            if m > 1000000:
-                f('', 0)
-            result = 0
-            for i in range(m):
-                result += f('-' * 50 + '-c-l-', i+100)
-        self.meta_interp(g, [10], backendopt=True)
-        self.check_aborted_count(1)
-        self.check_resops(call=0, call_assembler_i=2)
-        self.check_jitcell_token_count(2)
+    def test_tco_doesnt_lead_to_infinite_tracing(self):
+        import multiprocessing
+        # this is super annoying to test too! since we have stack overflows in
+        # the llinterp, sort of random things can happen, depending on how much
+        # code in llinterp and pyjitpl are already jitted. therefore we run the
+        # function in a subprocess.
+        import subprocess, sys, os
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(sys.path)
+        subprocess.check_output("%s %s" % (sys.executable, __file__), shell=True, env=env)
 
 
 class TestLLtype(RecursiveTests, LLJitMixin):
     pass
+
+def tco_doesnt_lead_to_infinite_tracing():
+    from rpython.rlib.rstackovf import _StackOverflow
+    self = TestLLtype()
+    myjitdriver = JitDriver(greens=[], reds='auto')
+    def g1(i):
+        if i < 0:
+            return 1
+        return g1(i) # infinite recursion
+    def g(i):
+        set_param(myjitdriver, "threshold", 1)
+        g1(-1)
+        x = i
+        while x < 100:
+            myjitdriver.jit_merge_point()
+            try:
+                g1(100000)
+            except _StackOverflow:
+                return x
+        return x
+    res = self.meta_interp(g, [4])
+    assert res >= 0
+
+if __name__ == '__main__':
+    tco_doesnt_lead_to_infinite_tracing()

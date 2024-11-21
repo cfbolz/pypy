@@ -1,5 +1,8 @@
+from __future__ import print_function
+
 from rpython.jit.codewriter import longlong
 from rpython.jit.codewriter.jitcode import JitCode, SwitchDictDescr
+from rpython.jit.codewriter.liveness import OFFSET_SIZE
 from rpython.jit.metainterp.compile import ResumeAtPositionDescr
 from rpython.jit.metainterp.jitexc import get_llexception, reraise
 from rpython.jit.metainterp import jitexc
@@ -10,13 +13,16 @@ from rpython.rlib import longlong2float
 from rpython.rlib.debug import ll_assert, make_sure_not_resized
 from rpython.rlib.debug import check_annotation
 from rpython.rlib.objectmodel import we_are_translated, specialize
-from rpython.rlib.rarithmetic import intmask, LONG_BIT, r_uint, ovfcheck
+from rpython.rlib.rarithmetic import (intmask, LONG_BIT, r_uint, ovfcheck,
+    uint_mul_high)
 from rpython.rlib.unroll import unrolling_iterable
 from rpython.rtyper.lltypesystem import lltype, llmemory, rffi
 from rpython.rtyper import rclass
 from rpython.rtyper.lltypesystem.lloperation import llop
+from rpython.rlib.debug import debug_start, debug_stop, debug_print
 from rpython.rlib.jit_libffi import CIF_DESCRIPTION_P
 
+SIZE_LIVE_OP = OFFSET_SIZE + 1
 
 def arguments(*argtypes, **kwds):
     resulttype = kwds.pop('returns', None)
@@ -52,7 +58,6 @@ class BlackholeInterpBuilder(object):
         self.setup_insns(asm.insns)
         self.setup_descrs(asm.descrs)
         self.metainterp_sd = metainterp_sd
-        self.num_interpreters = 0
         self.blackholeinterps = None
 
     def _cleanup_(self):
@@ -64,6 +69,7 @@ class BlackholeInterpBuilder(object):
         for key, value in insns.items():
             assert self._insns[value] is None
             self._insns[value] = key
+        self.op_live = insns.get('live/', -1)
         self.op_catch_exception = insns.get('catch_exception/L', -1)
         self.op_rvmprof_code = insns.get('rvmprof_code/ii', -1)
         #
@@ -157,14 +163,14 @@ class BlackholeInterpBuilder(object):
                 args = args + (value,)
 
             if verbose and not we_are_translated():
-                print '\tbh:', name, list(args),
+                print('\tbh:', name, list(args), end=" ")
 
             # call the method bhimpl_xxx()
             try:
                 result = unboundmethod(*args)
             except Exception as e:
                 if verbose and not we_are_translated():
-                    print '-> %s!' % (e.__class__.__name__,)
+                    print('-> %s!' % (e.__class__.__name__,))
                 if resulttype == 'i' or resulttype == 'r' or resulttype == 'f':
                     position += 1
                 self.position = position
@@ -172,9 +178,9 @@ class BlackholeInterpBuilder(object):
 
             if verbose and not we_are_translated():
                 if result is None:
-                    print
+                    print()
                 else:
-                    print '->', result
+                    print('->', result)
 
             if resulttype == 'i':
                 # argcode should be 'i' too
@@ -242,8 +248,7 @@ class BlackholeInterpBuilder(object):
             self.blackholeinterps = res.back
             return res
         else:
-            self.num_interpreters += 1
-            return BlackholeInterpreter(self, self.num_interpreters)
+            return BlackholeInterpreter(self)
 
     def release_interp(self, interp):
         interp.cleanup_registers()
@@ -261,7 +266,8 @@ def check_list_of_plain_integers(s_arg, bookkeeper):
     from rpython.annotator import model as annmodel
     assert isinstance(s_arg, annmodel.SomeList)
     s_arg.listdef.never_resize()
-    assert s_arg.listdef.listitem.s_value.knowntype is int
+    s_value = s_arg.listdef.listitem.s_value
+    assert s_value.knowntype is int or isinstance(s_value, annmodel.SomeImpossibleValue)
 
 def _check_int(s_arg, bookkeeper):
     assert s_arg.knowntype is int
@@ -271,17 +277,17 @@ def plain_int(x):
     check_annotation(x, _check_int)
     return x
 
+EMPTY_LIST_I = [] # shared
 
 class BlackholeInterpreter(object):
 
-    def __init__(self, builder, count_interpreter):
+    def __init__(self, builder):
         self.builder            = builder
         self.cpu                = builder.cpu
         self.dispatch_loop      = builder.dispatch_loop
         self.descrs             = builder.descrs
         self.op_catch_exception = builder.op_catch_exception
         self.op_rvmprof_code    = builder.op_rvmprof_code
-        self.count_interpreter  = count_interpreter
         #
         if we_are_translated():
             default_i = 0
@@ -291,28 +297,42 @@ class BlackholeInterpreter(object):
             default_i = MissingValue()
             default_r = MissingValue()
             default_f = MissingValue()
-        self.registers_i = [default_i] * 256
-        self.registers_r = [default_r] * 256
-        self.registers_f = [default_f] * 256
+        self.registers_i = EMPTY_LIST_I
+        self.registers_r = None
+        self.registers_f = None
         self.tmpreg_i = default_i
         self.tmpreg_r = default_r
         self.tmpreg_f = default_f
         self.jitcode = None
-        self.back = None # chain unused interpreters together via this
         check_annotation(self.registers_i, check_list_of_plain_integers)
 
     def __repr__(self):
-        return '<BHInterp #%d>' % self.count_interpreter
+        return '<BHInterp %s>' % self.jitcode
 
     def setposition(self, jitcode, position):
-        if jitcode is not self.jitcode:
-            # the real performance impact of the following code is unclear,
-            # but it should be minimized by the fact that a given
-            # BlackholeInterpreter instance is likely to be reused with
-            # exactly the same jitcode, so we don't do the copy again.
-            self.copy_constants(self.registers_i, jitcode.constants_i)
-            self.copy_constants(self.registers_r, jitcode.constants_r)
-            self.copy_constants(self.registers_f, jitcode.constants_f)
+        num_regs_and_consts_i = jitcode.num_regs_and_consts_i()
+        num_regs_and_consts_r = jitcode.num_regs_and_consts_r()
+        num_regs_and_consts_f = jitcode.num_regs_and_consts_f()
+        if we_are_translated():
+            default_i = 0
+            default_r = NULL
+            default_f = longlong.ZEROF
+        else:
+            default_i = MissingValue()
+            default_r = MissingValue()
+            default_f = MissingValue()
+        if num_regs_and_consts_i:
+            if self.registers_i is None or len(self.registers_i) < num_regs_and_consts_i:
+                self.registers_i = [default_i] * num_regs_and_consts_i
+            self.copy_constants(self.registers_i, jitcode.constants_i, jitcode.num_regs_i())
+        if num_regs_and_consts_r:
+            if self.registers_r is None or len(self.registers_r) < num_regs_and_consts_r:
+                self.registers_r = [default_r] * num_regs_and_consts_r
+            self.copy_constants(self.registers_r, jitcode.constants_r, jitcode.num_regs_r())
+        if num_regs_and_consts_f:
+            if self.registers_f is None or len(self.registers_f) < num_regs_and_consts_f:
+                self.registers_f = [default_f] * num_regs_and_consts_f
+            self.copy_constants(self.registers_f, jitcode.constants_f, jitcode.num_regs_f())
         self.jitcode = jitcode
         self.position = position
 
@@ -371,7 +391,7 @@ class BlackholeInterpreter(object):
         self.exception_last_value = lltype.nullptr(rclass.OBJECT)
 
     def get_current_position_info(self):
-        return self.jitcode.get_live_vars_info(self.position)
+        return self.jitcode.get_live_vars_info(self.position, self.builder.op_live)
 
     def handle_exception_in_frame(self, e):
         # This frame raises an exception.  First try to see if
@@ -380,6 +400,9 @@ class BlackholeInterpreter(object):
         position = self.position
         if position < len(code):
             opcode = ord(code[position])
+            if opcode == self.builder.op_live: # live, skip it
+                position += SIZE_LIVE_OP
+                opcode = ord(code[position])
             if opcode == self.op_catch_exception:
                 # store the exception on 'self', and jump to the handler
                 self.exception_last_value = e
@@ -402,6 +425,9 @@ class BlackholeInterpreter(object):
         code = self.jitcode.code
         position = self.position
         opcode = ord(code[position])
+        if opcode == self.builder.op_live:
+            position += SIZE_LIVE_OP
+            opcode = ord(code[position])
         if opcode == self.op_rvmprof_code:
             arg1 = self.registers_i[ord(code[position + 1])]
             arg2 = self.registers_i[ord(code[position + 2])]
@@ -412,18 +438,15 @@ class BlackholeInterpreter(object):
                 from rpython.rlib.rvmprof import cintf
                 cintf.jit_rvmprof_code(0, arg2)
 
-    def copy_constants(self, registers, constants):
+    def copy_constants(self, registers, constants, targetindex):
         """Copy jitcode.constants[0] to registers[255],
                 jitcode.constants[1] to registers[254],
                 jitcode.constants[2] to registers[253], etc."""
         make_sure_not_resized(registers)
         make_sure_not_resized(constants)
-        i = len(constants) - 1
-        while i >= 0:
-            j = 255 - i
-            assert j >= 0
-            registers[j] = constants[i]
-            i -= 1
+        for i in range(len(constants)):
+            registers[targetindex] = constants[i]
+            targetindex += 1
     copy_constants._annspecialcase_ = 'specialize:arglistitemtype(1)'
 
     # ----------
@@ -449,7 +472,7 @@ class BlackholeInterpreter(object):
         from rpython.jit.metainterp.optimizeopt import intdiv
         a = r_uint(a)
         b = r_uint(b)
-        c = intdiv.unsigned_mul_high(a, b)
+        c = uint_mul_high(a, b)
         return intmask(c)
 
     @arguments("L", "i", "i", returns="iL")
@@ -592,6 +615,24 @@ class BlackholeInterpreter(object):
 
     @arguments("r", "i")
     def bhimpl_record_exact_class(a, b):
+        pass
+
+    @arguments("cpu", "i", "i", "I", "R", "d")
+    def bhimpl_record_known_result_i_ir_v(cpu, res, func, args_i, args_r,
+                                     calldescr):
+        pass
+
+    @arguments("cpu", "r", "i", "I", "R", "d")
+    def bhimpl_record_known_result_r_ir_v(cpu, res, func, args_i, args_r,
+                                     calldescr):
+        pass
+
+    @arguments("r", "r")
+    def bhimpl_record_exact_value_r(a, b):
+        pass
+
+    @arguments("i", "i")
+    def bhimpl_record_exact_value_i(a, b):
         pass
 
     @arguments("i", returns="i")
@@ -1560,6 +1601,10 @@ class BlackholeInterpreter(object):
     def bhimpl_rvmprof_code(leaving, unique_id):
         from rpython.rlib.rvmprof import cintf
         cintf.jit_rvmprof_code(leaving, unique_id)
+
+    @arguments("pc", returns="L")
+    def bhimpl_live(pc):
+        return pc + OFFSET_SIZE
 
     # ----------
     # helpers to resume running in blackhole mode when a guard failed

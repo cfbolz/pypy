@@ -320,10 +320,11 @@ class PyPyTarget(object):
             config.objspace.lonepycfiles = False
 
         if config.objspace.usemodules.cpyext:
-            if config.translation.gc not in ('incminimark', 'boehm'):
-                raise Exception("The 'cpyext' module requires the 'incminimark'"
-                    " or 'boehm' GC.  You need either 'targetpypystandalone.py"
-                    " --withoutmod-cpyext', or use one of these two GCs.")
+            if config.translation.gc != 'incminimark':
+                raise Exception("The 'cpyext' module requires the default"
+                    " 'incminimark' GC.  You need 'targetpypystandalone.py"
+                    " --withoutmod-cpyext' with other GCs.  (It almost"
+                    " works with Boehm, the fix should be quick)")
 
         config.translating = True
 
@@ -358,12 +359,9 @@ class PyPyTarget(object):
             ''' Use cffi to compile cffi interfaces to modules'''
             filename = join(pypydir, '..', 'lib_pypy', 'pypy_tools',
                                    'build_cffi_imports.py')
-            if sys.platform in ('darwin', 'linux', 'linux2'):
-                argv = [filename, '--embed-dependencies']
-            else:
-                argv = [filename,]
-            status, out, err = run_subprocess(str(driver.compute_exe_name()),
-                                              argv)
+            argv = [filename,]
+            exe_name = py.path.local(driver.c_entryp)
+            status, out, err = run_subprocess(str(exe_name), argv)
             sys.stdout.write(out)
             sys.stderr.write(err)
             # otherwise, ignore errors
@@ -393,7 +391,7 @@ class PyPyTarget(object):
         w_dict = app.getwdict(self.space)
         entry_point, _ = create_entry_point(self.space, w_dict)
 
-        return entry_point, None, PyPyAnnotatorPolicy()
+        return entry_point, None, PyPyAnnotatorPolicy(self.space)
 
     def interface(self, ns):
         for name in ['take_options', 'handle_config', 'print_help', 'target',

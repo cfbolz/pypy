@@ -162,6 +162,7 @@ class W_ArrayBase(W_Root):
     def __del__(self):
         if self._buffer:
             lltype.free(self._buffer, flavor='raw')
+            self._buffer = lltype.nullptr(rffi.CCHARP.TO)
 
     def setlen(self, size, zero=False, overallocate=True):
         if self._buffer:
@@ -189,7 +190,7 @@ class W_ArrayBase(W_Root):
                         rffi.CCHARP.TO, byte_size, flavor='raw')
                     copy_bytes = min(size, self.len) * self.itemsize
                     rffi.c_memcpy(rffi.cast(rffi.VOIDP, new_buffer),
-                                  rffi.cast(rffi.VOIDP, self._buffer),
+                                  rffi.cast(rffi.CONST_VOIDP, self._buffer),
                                   copy_bytes)
             else:
                 self.len = size
@@ -250,30 +251,34 @@ class W_ArrayBase(W_Root):
             j = self.len
         if i >= j:
             return None
-        oldbuffer = self._buffer
-        self._buffer = lltype.malloc(rffi.CCHARP.TO,
+        newbuffer = lltype.malloc(rffi.CCHARP.TO,
             (self.len - (j - i)) * self.itemsize, flavor='raw')
         # Issue #2913: don't pass add_memory_pressure here, otherwise
         # memory pressure grows but actual raw memory usage doesn't---we
         # are freeing the old buffer at the end of this function.
-        if i:
-            rffi.c_memcpy(
-                rffi.cast(rffi.VOIDP, self._buffer),
-                rffi.cast(rffi.VOIDP, oldbuffer),
-                i * self.itemsize
-            )
-        if j < self.len:
-            rffi.c_memcpy(
-                rffi.cast(rffi.VOIDP, rffi.ptradd(self._buffer,
-                                                  i * self.itemsize)),
-                rffi.cast(rffi.VOIDP, rffi.ptradd(oldbuffer,
-                                                  j * self.itemsize)),
-                (self.len - j) * self.itemsize
-            )
+        try:
+            if i:
+                rffi.c_memcpy(
+                    rffi.cast(rffi.VOIDP, newbuffer),
+                    rffi.cast(rffi.CONST_VOIDP, self._buffer),
+                    i * self.itemsize
+                )
+            if j < self.len:
+                rffi.c_memcpy(
+                    rffi.cast(rffi.VOIDP, rffi.ptradd(newbuffer,
+                                                      i * self.itemsize)),
+                    rffi.cast(rffi.CONST_VOIDP, rffi.ptradd(self._buffer,
+                                                      j * self.itemsize)),
+                    (self.len - j) * self.itemsize
+                )
+        except Exception:
+            lltype.free(newbuffer, flavor='raw')
+            raise
         self.len -= j - i
         self.allocated = self.len
-        if oldbuffer:
-            lltype.free(oldbuffer, flavor='raw')
+        if self._buffer:
+            lltype.free(self._buffer, flavor='raw')
+        self._buffer = newbuffer
 
     def readbuf_w(self, space):
         return ArrayBuffer(self, True)
@@ -484,7 +489,7 @@ class W_ArrayBase(W_Root):
         """
         w_ptr = space.newint(self._buffer_as_unsigned())
         w_len = space.newint(self.len)
-        return space.newtuple([w_ptr, w_len])
+        return space.newtuple2(w_ptr, w_len)
 
     def descr_reduce(self, space):
         """ Return state information for pickling.
@@ -509,7 +514,7 @@ class W_ArrayBase(W_Root):
         w_a.setlen(self.len, overallocate=False)
         rffi.c_memcpy(
             rffi.cast(rffi.VOIDP, w_a._buffer_as_unsigned()),
-            rffi.cast(rffi.VOIDP, self._buffer_as_unsigned()),
+            rffi.cast(rffi.CONST_VOIDP, self._buffer_as_unsigned()),
             self.len * self.itemsize
         )
         return w_a
@@ -567,8 +572,8 @@ class W_ArrayBase(W_Root):
     def descr_getitem(self, space, w_idx):
         "x.__getitem__(y) <==> x[y]"
         if not space.isinstance_w(w_idx, space.w_slice):
-            idx, stop, step = space.decode_index(w_idx, self.len)
-            assert step == 0
+            idx, stop, step, slicelength = space.decode_index4(w_idx, self)
+            assert step == 0 and slicelength == 1
             return self.w_getitem(space, idx)
         else:
             return self.getitem_slice(space, w_idx)
@@ -589,7 +594,7 @@ class W_ArrayBase(W_Root):
                            w_item)
 
     def descr_delitem(self, space, w_idx):
-        start, stop, step, size = self.space.decode_index4(w_idx, self.len)
+        start, stop, step, size = self.space.decode_index4(w_idx, self)
         if step != 1:
             # I don't care about efficiency of that so far
             w_lst = self.descr_tolist(space)
@@ -615,14 +620,14 @@ class W_ArrayBase(W_Root):
         if self.len:
             rffi.c_memcpy(
                 rffi.cast(rffi.VOIDP, a._buffer),
-                rffi.cast(rffi.VOIDP, self._buffer),
+                rffi.cast(rffi.CONST_VOIDP, self._buffer),
                 self.len * self.itemsize
             )
         if w_other.len:
             rffi.c_memcpy(
                 rffi.cast(rffi.VOIDP, rffi.ptradd(a._buffer,
                                              self.len * self.itemsize)),
-                rffi.cast(rffi.VOIDP, w_other._buffer),
+                rffi.cast(rffi.CONST_VOIDP, w_other._buffer),
                 w_other.len * self.itemsize
             )
         keepalive_until_here(self)
@@ -640,7 +645,7 @@ class W_ArrayBase(W_Root):
             rffi.c_memcpy(
                 rffi.cast(rffi.VOIDP, rffi.ptradd(self._buffer,
                                              oldlen * self.itemsize)),
-                rffi.cast(rffi.VOIDP, w_other._buffer),
+                rffi.cast(rffi.CONST_VOIDP, w_other._buffer),
                 otherlen * self.itemsize
             )
         keepalive_until_here(self)
@@ -691,7 +696,7 @@ class W_ArrayBase(W_Root):
                 dstbuf = rffi.ptradd(dstbuf, srcsize)
             for r in range(start, repeat):
                 rffi.c_memcpy(rffi.cast(rffi.VOIDP, dstbuf),
-                              rffi.cast(rffi.VOIDP, srcbuf),
+                              rffi.cast(rffi.CONST_VOIDP, srcbuf),
                               srcsize)
                 dstbuf = rffi.ptradd(dstbuf, srcsize)
         keepalive_until_here(self)
@@ -1128,7 +1133,7 @@ def make_array(mytype):
             keepalive_until_here(self)
 
         def getitem_slice(self, space, w_idx):
-            start, stop, step, size = space.decode_index4(w_idx, self.len)
+            start, stop, step, size = space.decode_index4(w_idx, self)
             w_a = mytype.w_class(self.space)
             w_a.setlen(size, overallocate=False)
             assert step != 0
@@ -1143,7 +1148,8 @@ def make_array(mytype):
             return w_a
 
         def setitem(self, space, w_idx, w_item):
-            idx, stop, step = space.decode_index(w_idx, self.len)
+            idx, stop, step, slicelength = space.decode_index4(w_idx, self)
+            assert slicelength == 1
             if step != 0:
                 raise oefmt(self.space.w_TypeError,
                             "can only assign array to array slice")
@@ -1155,7 +1161,7 @@ def make_array(mytype):
             if not isinstance(w_item, W_Array):
                 raise oefmt(space.w_TypeError,
                             "can only assign to a slice array")
-            start, stop, step, size = self.space.decode_index4(w_idx, self.len)
+            start, stop, step, size = self.space.decode_index4(w_idx, self)
             assert step != 0
             if w_item.len != size or self is w_item:
                 if start == self.len and step > 0:

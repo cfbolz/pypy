@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import py
 from rpython.rtyper.lltypesystem import lltype, llmemory, rffi
 from rpython.rlib.jit_hooks import LOOP_RUN_CONTAINER
@@ -80,7 +82,7 @@ class AbstractX86CPU(AbstractLLCPU):
         """
         NOT_RPYTHON
         """
-        from rpython.jit.backend.x86.tool.viewcode import machine_code_dump
+        from rpython.jit.backend.tool.viewcode import machine_code_dump
         data = []
         label_list = [(offset, name) for name, offset in
                       looptoken._x86_ops_offset.iteritems()]
@@ -91,7 +93,7 @@ class AbstractX86CPU(AbstractLLCPU):
             data.append(src[p])
         data = ''.join(data)
         lines = machine_code_dump(data, addr, self.backend_name, label_list)
-        print ''.join(lines)
+        print(''.join(lines))
 
     def compile_bridge(self, faildescr, inputargs, operations,
                        original_loop_token, log=True, logger=None):

@@ -42,8 +42,8 @@ Module xyz does not work with PyPy: ImportError
 -----------------------------------------------
 
 A module installed for CPython is not automatically available for PyPy
---- just like a module installed for CPython 2.6 is not automatically
-available for CPython 2.7 if you installed both.  In other words, you
+--- just like a module installed for CPython 3.6 is not automatically
+available for CPython 3.7 if you installed both.  In other words, you
 need to install the module xyz specifically for PyPy.
 
 On Linux, this means that you cannot use ``apt-get`` or some similar
@@ -141,19 +141,17 @@ works on Mac and Windows: it is tested there, but most of us are running
 Linux so fixes may depend on 3rd-party contributions.
 
 To bootstrap from sources, PyPy can use either CPython 2.7 or
-another (e.g. older) PyPy.  Cross-translation is not really supported:
+PyPy 2.7.  Cross-translation is not really supported:
 e.g. to build a 32-bit PyPy, you need to have a 32-bit environment.
 
-Which Python version (2.x?) does PyPy implement?
-------------------------------------------------
+Which Python versions does PyPy implement?
+------------------------------------------
 
-PyPy comes in two versions:
+PyPy will always support 2.7 since RPython is written for it. In addition, PyPy
+supports various Python3 versions, see the `release notes`_ for the latest
+releases. Typically, we will support one or two versions of Python3.
 
-* one is fully compatible with Python 2.7;
-
-* the other is fully compatible with one 3.x version.  At the time of
-  this writing, this is 3.7.
-
+.. _`release notes`: index-of-release-notes.html
 
 .. _threading:
 
@@ -198,9 +196,8 @@ has two pieces:
     PyPy (but it might be dropped in the future).
 
   * a fork_ of the official numpy repository maintained by us and informally
-    called ``numpypy``: even more confusing, the name of the repo on bitbucket
-    is ``numpy``.  The main difference with the upstream numpy, is that it is
-    based on the micronumpy module written in RPython, instead of of
+    called ``numpypy``:  The main difference with the upstream numpy, is that
+    it is based on the micronumpy module written in RPython, instead of of
     ``numpy.core.multiarray`` which is written in C.
 
 
@@ -208,13 +205,12 @@ Should I install numpy or numpypy?
 -----------------------------------
 
 TL;DR version: you should use numpy. You can install it by doing ``pypy -m pip
-install numpy``.  You might also be interested in using the experimental `PyPy
-binary wheels`_ to save compilation time.
+install numpy``. 
 
 The upstream ``numpy`` is written in C, and runs under the cpyext
 compatibility layer.  Nowadays, cpyext is mature enough that you can simply
-use the upstream ``numpy``, since it passes the test suite. At the
-moment of writing (October 2017) the main drawback of ``numpy`` is that cpyext
+use the upstream ``numpy``, since it passes the test suite. The main drawback
+of ``numpy`` is that cpyext
 is infamously slow, and thus it has worse performance compared to
 ``numpypy``. However, we are actively working on improving it, as we expect to
 reach the same speed when HPy_ can be used.
@@ -225,12 +221,11 @@ be completely compatible: over the years the project slowly matured and
 eventually it was able to call out to the LAPACK and BLAS libraries to speed
 matrix calculations, and reached around an 80% parity with the upstream
 numpy. However, 80% is far from 100%.  Since cpyext/numpy compatibility is
-progressing fast, we have discontinued support for ``numpypy``.
+complete, we have discontinued support for ``numpypy``.
 
-.. _`started to reimplement`: https://morepypy.blogspot.co.il/2011/05/numpy-in-pypy-status-and-roadmap.html
-.. _fork: https://bitbucket.org/pypy/numpy
-.. _`PyPy binary wheels`: https://github.com/antocuni/pypy-wheels
-.. _HPy: https://morepypy.blogspot.com/2019/12/hpy-kick-off-sprint-report.html
+.. _`started to reimplement`: https://www.pypy.org/posts/2011/05/numpy-in-pypy-status-and-roadmap-8332894230779779992.html
+.. _fork: https://github.com/pypy/numpypy
+.. _HPy: https://hpyproject.org/
 
 Is PyPy more clever than CPython about Tail Calls?
 --------------------------------------------------
@@ -267,7 +262,7 @@ various corner cases in your code.  This is a bad case for JIT
 compilers.  Note also that our JIT has a very high warm-up cost, meaning
 that any program is slow at the beginning.  If you want to compare the
 timings with CPython, even relatively simple programs need to run *at
-least* one second, preferrably at least a few seconds.  Large,
+least* one second, preferably at least a few seconds.  Large,
 complicated programs need even more time to warm-up the JIT.
 
 .. _benchmarking site: https://speed.pypy.org
@@ -372,15 +367,14 @@ Currently, we have `Topaz`_, a Ruby interpreter; `Hippy`_, a PHP
 interpreter; preliminary versions of a `JavaScript interpreter`_
 (Leonardo Santagada as his Summer of PyPy project); a `Prolog interpreter`_
 (Carl Friedrich Bolz as his Bachelor thesis); and a `SmallTalk interpreter`_
-(produced during a sprint).  On the `PyPy bitbucket page`_ there is also a
-Scheme and an Io implementation; both of these are unfinished at the moment.
+(produced during a sprint).  There is also an unfinished `Scheme`_ implementation.
 
 .. _Topaz: https://github.com/topazproject/topaz
 .. _Hippy: https://morepypy.blogspot.ch/2012/07/hello-everyone.html
-.. _JavaScript interpreter: https://bitbucket.org/pypy/lang-js/
+.. _JavaScript interpreter: https://github.com/progval/rpython-langjs
 .. _Prolog interpreter: https://bitbucket.org/cfbolz/pyrolog/
 .. _SmallTalk interpreter: https://dx.doi.org/10.1007/978-3-540-89275-5_7
-.. _PyPy bitbucket page: https://bitbucket.org/pypy/
+.. _Scheme: https://github.com/tomoh1r/rpython-lang-scheme
 
 
 How do I get into PyPy development?  Can I come to sprints?
@@ -398,12 +392,12 @@ the most immediate way to get feedback (at least during some parts of the day;
 most PyPy developers are in Europe) and the `mailing list`_ is better for long
 discussions.
 
-We also encourage engagement via the gitlab repo at
-https://foss.heptapod.net/pypy/pypy. Issues can be filed and discussed in the
-`issue tracker`_ and we welcome `merge requests`.
+We also encourage engagement via the GitHub repo at
+https://github.com/pypy/pypy. Issues can be filed and discussed in the
+`issue tracker`_ and we welcome `pull requests`.
 
-.. _`issue tracker`: https://foss.heptapod.net/heptapod/foss.heptapod.net/-/issues
-.. _`merge requests`: https://foss.heptapod.net/heptapod/foss.heptapod.net/-/merge_requests
+.. _`issue tracker`: https://github.com/pypy/pypy/issues/
+.. _`pull requests`: https://github.com/pypy/pypy/pulls/
 
 .. _mailing list: https://mail.python.org/mailman/listinfo/pypy-dev
 
@@ -428,7 +422,7 @@ Be sure to enable it again if you need it!
 How should I report a bug?
 --------------------------
 
-Our bug tracker is here: https://foss.heptapod.net/pypy/pypy/issues/
+Our bug tracker is here: https://github.com/pypy/pypy/issues/
 
 Missing features or incompatibilities with CPython are considered
 bugs, and they are welcome.  (See also our list of `known
@@ -447,7 +441,7 @@ Debugging PyPy can be annoying.
 `This is a clear and useful bug report.`__  (Admittedly, sometimes
 the problem is really hard to reproduce, but please try to.)
 
-.. __: https://foss.heptapod.net/pypy/pypy/issues/2363/segfault-in-gc-pinned-object-in
+.. __: https://github.com/pypy/pypy/issues/2363
 
 In more details:
 
@@ -474,7 +468,7 @@ In more details:
   virtual machine where the problem occurs.
 
 * If giving us access would require us to use tools other than ssh,
-  make appointments, or sign a NDA, then we can consider a commerical
+  make appointments, or sign a NDA, then we can consider a commercial
   support contract for a small sum of money.
 
 * If even that is not possible for you, then sorry, we can't help.
@@ -490,11 +484,13 @@ the GC and possibly the JIT.
 .. _git:
 .. _github:
 
-Why doesn't PyPy use Git and move to GitHub?
----------------------------------------------
+Why did PyPy switch to Git and move to GitHub?
+----------------------------------------------
 
-We discussed it during the switch away from bitbucket.  We concluded that (1)
-the Git workflow is not as well suited as the Mercurial workflow for our style,
+PyPy moved from SVN to `Mercurial and bitbucket`_ in 2010. In 2020, when
+bitbucket summarily dropped support for Mercurial, we debated whether to move
+to Git/GitHub.  At the time we concluded that (1) the Git workflow is not as
+well suited as the Mercurial workflow for our style,
 and (2) moving to github "just because everybody else does" is a argument on
 thin grounds.
 
@@ -504,13 +500,13 @@ concept.  Git has *branches,* of course, which in Mercurial are called
 bookmarks.  We're not talking about bookmarks.
 
 The difference between git branches and named branches is not that important in
-a repo with 10 branches (no matter how big).  But in the case of PyPy, we have
-at the moment 1840 branches.  Most are closed by now, of course.  But we would
+a repo with 10 branches (no matter how big).  But in the case of PyPy, we had
+at that moment 1840 branches.  Most are closed by now, of course.  But we would
 really like to retain (both now and in the future) the ability to look at a
-commit from the past, and know in which branch it was made.  Please make sure
-you understand the difference between the Git and the Mercurial branches to
-realize that this is not always possible with Git--- we looked hard, and there
-is no built-in way to get this workflow.
+commit from the past, and know in which branch it was made.  There is a
+difference between the Git and the Mercurial branches and that this is not
+always possible with Git--- we looked hard, and there is no built-in way to get
+this workflow.
 
 Still not convinced?  Consider this git repo with three commits: commit #2 with
 parent #1 and head of git branch "A"; commit #3 with also parent #1 but head of
@@ -518,6 +514,17 @@ git branch "B".  When commit #1 was made, was it in the branch "A" or "B"?
 (It could also be yet another branch whose head was also moved forward, or even
 completely deleted.)
 
+Soon after this discussion, we discovered `git notes`_, which allow annotating
+each git commit with a note indicating its origin branch. While this is not a
+perfect solution, it does somewhat soften the blow.
+
+Our development efforts pivoted to integrate PyPy into the Open Source project
+space: PyPy began to be tested on many popular python projects, including
+availability on conda-forge_. This meant it became important to lower friction
+in the interactions with other development groups. It turns out most of them
+use GitHub, which only uses Git. So at the end of 2023 we `moved to
+Git/GitHub`_ for our main development. The repos that do not have as much
+public interaction still remain at https://foss.heptapod.net/pypy/.
 
 What is needed for better Windows 64 support of PyPy?
 -----------------------------------------------------
@@ -539,3 +546,8 @@ How long will PyPy support Python2?
 Since RPython is built on top of Python2 and that is extremely unlikely to
 change, the Python2 version of PyPy will be around "forever", i.e. as long as
 PyPy itself is around.
+
+.. _`mercurial and bitbucket`: https://www.pypy.org/posts/2010/12/pypy-migrates-to-mercurial-3308736161543832134.html
+.. _`git notes`: https://git-scm.com/docs/git-notes
+.. _`conda-forge`: https://www.pypy.org/posts/2022/11/pypy-and-conda-forge.html
+.. _`moved to Git/GitHub`: https://www.pypy.org/posts/2023/12/pypy-moved-to-git-github.html

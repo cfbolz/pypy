@@ -362,7 +362,7 @@ All the ``SomeXxx`` instances are immutable.  If the annotator needs to
 revise its belief about what a Variable can contain, it does so creating a
 new annotation, not mutating the existing one.
 
-.. _EU report about translation: https://bitbucket.org/pypy/extradoc/raw/tip/eu-report/D05.1_Publish_on_translating_a_very-high-level_description.pdf
+.. _EU report about translation: https://foss.heptapod.net/pypy/extradoc/-/tree/branch/extradoc/D05.1_Publish_on_translating_a_very-high-level_description.pdf
 
 
 Mutable Values and Containers
@@ -622,7 +622,7 @@ and complicated beast, formed from many separate components.
    subgraph legend {
      "Input or Output" [shape=ellipse, style=filled]
      "Transformation Step" [shape=box, style="rounded,filled"]
-     // Invisible egde to make sure they are placed vertically
+     // Invisible edge to make sure they are placed vertically
      "Input or Output" -> "Transformation Step" [style=invis]
    }
 

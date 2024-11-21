@@ -1,5 +1,5 @@
 from rpython.rlib import rgc
-from rpython.rlib.objectmodel import we_are_translated, always_inline
+from rpython.rlib.objectmodel import we_are_translated, always_inline, newlist_hint
 from rpython.rlib.rarithmetic import ovfcheck, highest_bit
 from rpython.rtyper.lltypesystem import llmemory, lltype, rstr
 from rpython.rtyper.annlowlevel import cast_instance_to_gcref
@@ -51,10 +51,11 @@ class GcRewriterAssembler(object):
     c_zero = ConstInt(0)
     c_null = ConstPtr(lltype.nullptr(llmemory.GCREF.TO))
 
-    def __init__(self, gc_ll_descr, cpu):
+    def __init__(self, gc_ll_descr, cpu, num_operations_hint=1):
         self.gc_ll_descr = gc_ll_descr
         self.cpu = cpu
-        self._newops = []
+        # the number of ops goes slightly up, if anything
+        self._newops = newlist_hint(num_operations_hint)
         self._known_lengths = {}
         self._write_barrier_applied = {}
         self._delayed_zero_setfields = {}
@@ -415,6 +416,14 @@ class GcRewriterAssembler(object):
                 continue
             if opnum == rop.JUMP or opnum == rop.FINISH:
                 self.emit_pending_zeros()
+            if opnum == rop.GUARD_ALWAYS_FAILS:
+                # turn into guard_value(same_as_i(0), 1)
+                op1 = ResOperation(rop.SAME_AS_I, [ConstInt(0)])
+                self.emit_op(op1)
+                newop = op.copy_and_change(rop.GUARD_VALUE, args=[op1, ConstInt(1)])
+                newop.setfailargs(op.getfailargs())
+                self.emit_op(newop)
+                continue
             #
             self.emit_op(op)
         return self._newops

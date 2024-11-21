@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import sys
 from rpython.rtyper.extregistry import ExtRegistryEntry
 from rpython.rtyper.lltypesystem import lltype, llmemory, rffi
@@ -91,10 +93,15 @@ def repr_rpython(box, typechars):
 
 
 class AbstractDescr(AbstractValue):
-    __slots__ = ('descr_index', 'ei_index')
+    _attrs_ = []
+    __slots__ = ()
     llopaque = True
-    descr_index = -1
-    ei_index = sys.maxint
+
+    def get_descr_index(self):
+        return -1
+
+    def get_ei_index(self):
+        return sys.maxint
 
     def repr_of_descr(self):
         return '%r' % (self,)
@@ -343,6 +350,14 @@ class ConstPtr(Const):
         except lltype.UninitializedMemoryAccess:
             return '<uninitialized string>'
 
+
+class ConstPtrJitCode(ConstPtr):
+    """ a ConstPtr that comes from a constant in the jitcode. has an extra
+    field to cache the encoding in the opencoder. """
+    _attrs_ = ('opencoder_index', )
+    opencoder_index = -1
+
+
 CONST_NULL = ConstPtr(ConstPtr.value)
 
 # ____________________________________________________________
@@ -413,6 +428,8 @@ class JitCellToken(AbstractDescr):
     was compiled; but the LoopDescr remains alive and points to the
     generated assembler.
     """
+    FORCE_BRIDGE_SEGMENTING = 1 # stored in retraced_count
+
     target_tokens = None
     failed_states = None
     retraced_count = 0
@@ -443,6 +460,12 @@ class JitCellToken(AbstractDescr):
 
     def dump(self):
         self.compiled_loop_token.cpu.dump_loop_token(self)
+
+    def get_retraced_count(self):
+        return self.retraced_count >> 1
+
+    def set_retraced_count(self, value):
+        self.retraced_count = (value << 1) | (self.retraced_count & 1)
 
 class TargetToken(AbstractDescr):
     _ll_loop_code = 0     # for the backend.  If 0, we know that it is
@@ -586,11 +609,11 @@ class TreeLoop(object):
 
     def dump(self):
         # RPython-friendly
-        print '%r: inputargs =' % self, self._dump_args(self.inputargs)
+        print('%r: inputargs =' % self, self._dump_args(self.inputargs))
         for op in self.operations:
             args = op.getarglist()
-            print '\t', op.getopname(), self._dump_args(args), \
-                  self._dump_box(op.result)
+            print('\t', op.getopname(), self._dump_args(args),
+                  self._dump_box(op.result))
 
     def _dump_args(self, boxes):
         return '[' + ', '.join([self._dump_box(box) for box in boxes]) + ']'
@@ -638,11 +661,6 @@ class FrontendOp(AbstractResOp):
         p = rffi.cast(rffi.INT, self.position_and_flags)
         return intmask(p) >> FO_POSITION_SHIFT
 
-    def set_position(self, new_pos):
-        assert new_pos >= 0
-        self.position_and_flags &= ~FO_POSITION_MASK
-        self.position_and_flags |= r_uint(new_pos << FO_POSITION_SHIFT)
-
     def is_replaced_with_const(self):
         return bool(self.position_and_flags & FO_REPLACED_WITH_CONST)
 
@@ -655,14 +673,18 @@ class FrontendOp(AbstractResOp):
 class IntFrontendOp(IntOp, FrontendOp):
     _attrs_ = ('position_and_flags', '_resint')
 
-    def copy_value_from(self, other):
-        self._resint = other.getint()
+    def __init__(self, pos, value):
+        FrontendOp.__init__(self, pos)
+        self._resint = value
+
 
 class FloatFrontendOp(FloatOp, FrontendOp):
     _attrs_ = ('position_and_flags', '_resfloat')
 
-    def copy_value_from(self, other):
-        self._resfloat = other.getfloatstorage()
+    def __init__(self, pos, value):
+        FrontendOp.__init__(self, pos)
+        self._resfloat = value
+
 
 class RefFrontendOp(RefOp, FrontendOp):
     _attrs_ = ('position_and_flags', '_resref', '_heapc_deps')
@@ -671,8 +693,9 @@ class RefFrontendOp(RefOp, FrontendOp):
         _heapc_flags = r_uint(0)       # high 32 bits of 'position_and_flags'
     _heapc_deps = None
 
-    def copy_value_from(self, other):
-        self._resref = other.getref_base()
+    def __init__(self, pos, value):
+        FrontendOp.__init__(self, pos)
+        self._resref = value
 
     if LONG_BIT == 32:
         def _get_heapc_flags(self):
@@ -691,23 +714,13 @@ class RefFrontendOp(RefOp, FrontendOp):
 class History(object):
     trace = None
 
-    def __init__(self):
-        self.descr_cache = {}
-        self.descrs = {}
-        self.consts = []
-        self._cache = []
-
-    def set_inputargs(self, inpargs, metainterp_sd):
+    def __init__(self, max_num_inputargs, metainterp_sd):
         from rpython.jit.metainterp.opencoder import Trace
+        self.trace = Trace(max_num_inputargs, metainterp_sd)
 
-        self.trace = Trace(inpargs, metainterp_sd)
+    def set_inputargs(self, inpargs):
+        self.trace.set_inputargs(inpargs)
         self.inputargs = inpargs
-        if self._cache is not None:
-            # hack to record the ops *after* we know our inputargs
-            for (opnum, argboxes, op, descr) in self._cache:
-                pos = self.trace.record_op(opnum, argboxes, descr)
-                op.set_position(pos)
-            self._cache = None
 
     def length(self):
         return self.trace._count - len(self.trace.inputargs)
@@ -725,60 +738,75 @@ class History(object):
         return self.trace._count > self.trace._start
 
     @specialize.argtype(2)
-    def set_op_value(self, op, value):
-        if value is None:
-            return
-        elif isinstance(value, bool):
-            op.setint(int(value))
-        elif lltype.typeOf(value) == lltype.Signed:
-            op.setint(value)
-        elif lltype.typeOf(value) is longlong.FLOATSTORAGE:
-            op.setfloatstorage(value)
-        else:
-            assert lltype.typeOf(value) == llmemory.GCREF
-            op.setref_base(value)
-
     def _record_op(self, opnum, argboxes, descr=None):
         return self.trace.record_op(opnum, argboxes, descr)
 
     @specialize.argtype(3)
     def record(self, opnum, argboxes, value, descr=None):
-        if self.trace is None:
-            pos = 2**14 - 1
-        else:
-            pos = self._record_op(opnum, argboxes, descr)
+        pos = self._record_op(opnum, argboxes, descr)
+        op = self._make_op(pos, value)
+        return op
+
+    @specialize.argtype(2)
+    def record0(self, opnum, value, descr=None):
+        pos = self.trace.record_op0(opnum, descr)
+        op = self._make_op(pos, value)
+        return op
+
+    @specialize.argtype(3)
+    def record1(self, opnum, argbox1, value, descr=None):
+        pos = self.trace.record_op1(opnum, argbox1, descr)
+        op = self._make_op(pos, value)
+        return op
+
+    @specialize.argtype(4)
+    def record2(self, opnum, argbox1, argbox2, value, descr=None):
+        pos = self.trace.record_op2(opnum, argbox1, argbox2, descr)
+        op = self._make_op(pos, value)
+        return op
+
+    @specialize.argtype(5)
+    def record3(self, opnum, argbox1, argbox2, argbox3, value, descr=None):
+        pos = self.trace.record_op3(opnum, argbox1, argbox2, argbox3, descr)
+        op = self._make_op(pos, value)
+        return op
+
+    @specialize.argtype(2)
+    def _make_op(self, pos, value):
         if value is None:
             op = FrontendOp(pos)
         elif isinstance(value, bool):
-            op = IntFrontendOp(pos)
+            op = IntFrontendOp(pos, int(value))
         elif lltype.typeOf(value) == lltype.Signed:
-            op = IntFrontendOp(pos)
+            op = IntFrontendOp(pos, value)
         elif lltype.typeOf(value) is longlong.FLOATSTORAGE:
-            op = FloatFrontendOp(pos)
+            op = FloatFrontendOp(pos, value)
         else:
-            op = RefFrontendOp(pos)
-        if self.trace is None:
-            self._cache.append((opnum, argboxes, op, descr))
-        self.set_op_value(op, value)
+            assert lltype.typeOf(value) == llmemory.GCREF
+            op = RefFrontendOp(pos, value)
         return op
 
-    def record_nospec(self, opnum, argboxes, descr=None):
+    def record_nospec(self, opnum, argboxes, valueconst, descr=None):
         tp = opclasses[opnum].type
         pos = self._record_op(opnum, argboxes, descr)
         if tp == 'v':
+            assert valueconst is None
             return FrontendOp(pos)
         elif tp == 'i':
-            return IntFrontendOp(pos)
+            return IntFrontendOp(pos, valueconst.getint())
         elif tp == 'f':
-            return FloatFrontendOp(pos)
+            return FloatFrontendOp(pos, valueconst.getfloatstorage())
         assert tp == 'r'
-        return RefFrontendOp(pos)
+        return RefFrontendOp(pos, valueconst.getref_base())
 
-    def record_default_val(self, opnum, argboxes, descr=None):
-        assert rop.is_same_as(opnum)
-        op = self.record_nospec(opnum, argboxes, descr)
-        op.copy_value_from(argboxes[0])
-        return op
+    def record_same_as(self, box):
+        if box.type == 'i':
+            return self.record1(rop.SAME_AS_I, box, box.getint())
+        elif box.type == 'r':
+            return self.record1(rop.SAME_AS_R, box, box.getref_base())
+        else:
+            assert box.type == 'f'
+            return self.record1(rop.SAME_AS_F, box, box.getfloatstorage())
 
 
 # ____________________________________________________________
@@ -980,17 +1008,17 @@ class Stats(object):
             insns = loop.summary(adding_insns=insns)
         if expected is not None:
             insns.pop('debug_merge_point', None)
-            print
-            print
-            print "        self.check_resops(%s)" % str(insns)
-            print
+            print()
+            print()
+            print("        self.check_resops(%s)" % str(insns))
+            print()
             import pdb; pdb.set_trace()
         else:
             chk = ['%s=%d' % (i, insns.get(i, 0)) for i in check]
-            print
-            print
-            print "        self.check_resops(%s)" % ', '.join(chk)
-            print
+            print()
+            print()
+            print("        self.check_resops(%s)" % ', '.join(chk))
+            print()
             import pdb; pdb.set_trace()
         return
 
@@ -1058,3 +1086,13 @@ class Entry(ExtRegistryEntry):
 
     def specialize_call(self, hop):
         hop.exception_cannot_occur()
+
+
+class BackendDescr(AbstractDescr):
+    descr_index = -1
+
+    def get_descr_index(self):
+        return self.descr_index
+
+    def get_ei_index(self):
+        return self.ei_index

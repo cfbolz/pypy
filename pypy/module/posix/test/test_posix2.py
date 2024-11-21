@@ -7,7 +7,6 @@ import sys
 import signal
 
 from rpython.tool.udir import udir
-from pypy.tool.pytest.objspace import gettestobjspace
 from rpython.translator.c.test.test_extfunc import need_sparse_files
 from rpython.rlib import rposix
 
@@ -19,7 +18,6 @@ else:
     USEMODULES += ['_rawffi', 'thread', 'signal', '_cffi_backend']
 
 def setup_module(mod):
-    mod.space = gettestobjspace(usemodules=USEMODULES)
     mod.path = udir.join('posixtestfile.txt')
     mod.path.write("this is a test")
     mod.path2 = udir.join('test_posix2-')
@@ -243,6 +241,17 @@ class AppTestPosix:
                 else:
                     assert 0
 
+    def test_open_handles_NUL_chars(self):
+        fn_with_NUL = 'foo\0bar'
+        posix = self.posix
+        try:
+            posix.open(fn_with_NUL, 0, 0)
+        except TypeError:
+            pass
+        else:
+            assert False, "expected ValueError"
+
+
     def test_chmod_exception(self):
         try:
             self.posix.chmod('qowieuqw/oeiu', 0)
@@ -383,9 +392,7 @@ class AppTestPosix:
             u = "caf\xe9".decode(file_system_encoding)
         except UnicodeDecodeError:
             # Could not decode, listdir returned the byte string
-            if sys.platform != 'darwin':
-                assert (str, "caf\xe9") in typed_result
-            else:
+            if sys.platform == 'darwin':
                 # if the test is being run in an utf-8 encoded macOS
                 # the posix.listdir function is returning the name of
                 # the file properly.
@@ -396,6 +403,11 @@ class AppTestPosix:
                 else:
                     # darwin 'normalized' it
                     assert (unicode, 'caf%E9') in typed_result
+            elif sys.platform == 'win32':
+                # Windows uses unicode, even when encoding is 'utf8'
+                assert (unicode, u"caf\xe9") in typed_result
+            else:
+                assert (str, "caf\xe9") in typed_result
         else:
             assert (unicode, u) in typed_result
         assert posix.access(b'caf\xe9', posix.R_OK) is False
@@ -518,6 +530,8 @@ class AppTestPosix:
             # just see if it does anything
             path = sysdrv + 'hubber'
             assert '\\' in posix._getfullpathname(path)
+            ufoo = posix._getfullpathname(u"foo")
+            assert isinstance(ufoo, unicode)
 
     def test_utime(self):
         os = self.posix
@@ -1011,6 +1025,7 @@ class AppTestPosix:
             assert os.WEXITSTATUS(status1) == expected
 
     if hasattr(os, 'symlink'):
+        @pytest.mark.skipif("config.option.runappdirect and sys.platform == 'darwin'")
         def test_symlink(self):
             posix = self.posix
             unicode_dir = self.unicode_dir
@@ -1167,6 +1182,7 @@ class AppTestPosix:
 
 class AppTestEnvironment(object):
     def setup_class(cls):
+        space = cls.space
         cls.w_path = space.wrap(str(path))
         cls.w_posix = space.appexec([], GET_POSIX)
         cls.w_python = space.wrap(sys.executable)
@@ -1279,7 +1295,7 @@ class AppTestUnicodeFilename:
             pytest.skip("encoding not good enough")
         f.write("test")
         f.close()
-        cls.space = space
+        space = cls.space
         cls.w_filename = space.wrap(ufilename)
         cls.w_posix = space.appexec([], GET_POSIX)
 

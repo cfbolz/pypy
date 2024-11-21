@@ -237,6 +237,22 @@ def test_format_char():
 
 def test_broken_unicode():
     raises(UnicodeDecodeError, 'Názov: %s'.__mod__, u'Jerry')
+    raises(UnicodeDecodeError, "\xff\xff%c".__mod__, u"a")
+
+def test_force_unicode_uses_default_encoding():
+    if not hasattr(sys, 'setdefaultencoding'):
+        skip("no setdefaultencoding")
+    encoding = sys.getdefaultencoding()
+    try:
+        sys.setdefaultencoding("utf-8")
+        assert "ä%s" % u"ö" == "äö"
+    finally:
+        sys.setdefaultencoding(encoding)
+
+def test_force_unicode_doesnt_force_random_objects():
+    with raises(TypeError) as info:
+        None % u"abc"
+    assert "unsupported operand type(s) for %: 'NoneType' and 'unicode'" in str(info.value)
 
 def test___int__():
     class MyInt(object):
@@ -411,3 +427,5 @@ def test_unicode_error_position():
         u"\xe4\xe4\xe4%\xe4" % {}
     assert str(info.value) == "unsupported format character u'\\xe4' (0xe4) at index 4"
 
+def test_g_strip_trailing_zero_bug():
+    assert "%.3g" % 1505.0 == "1.5e+03"

@@ -234,8 +234,8 @@ class Func(AbstractFuncPtr):
     funcsym = lltype.nullptr(rffi.VOIDP.TO)
 
     def __init__(self, name, argtypes, restype, funcsym, flags=FUNCFLAG_CDECL,
-                 keepalive=None):
-        AbstractFuncPtr.__init__(self, name, argtypes, restype, flags)
+                 keepalive=None, variadic_args=0):
+        AbstractFuncPtr.__init__(self, name, argtypes, restype, flags, variadic_args)
         self.keepalive = keepalive
         self.funcsym = funcsym
 
@@ -443,23 +443,22 @@ class CDLL(object):
         """Load the library, or raises DLOpenError."""
         self.lib = rffi.cast(DLLHANDLE, lib)
         if lib == 0:
-            with rffi.scoped_str2charp(libname) as ll_libname:
-                self.lib = dlopen(ll_libname, mode)
+            self.lib = dlopen(libname, mode)
 
     def __del__(self):
         if self.lib:
             dlclose(self.lib)
             self.lib = rffi.cast(DLLHANDLE, 0)
 
-    def getpointer(self, name, argtypes, restype, flags=FUNCFLAG_CDECL):
+    def getpointer(self, name, argtypes, restype, flags=FUNCFLAG_CDECL, variadic_args=0):
         return Func(name, argtypes, restype, dlsym(self.lib, name),
-                    flags=flags, keepalive=self)
+                    flags=flags, keepalive=self, variadic_args=variadic_args)
 
     def getpointer_by_ordinal(self, name, argtypes, restype,
-                              flags=FUNCFLAG_CDECL):
+                              flags=FUNCFLAG_CDECL, variadic_args=0):
         return Func('by_ordinal', argtypes, restype,
                     dlsym_byordinal(self.lib, name),
-                    flags=flags, keepalive=self)
+                    flags=flags, keepalive=self, variadic_args=variadic_args)
     def getaddressindll(self, name):
         return dlsym(self.lib, name)
 
@@ -468,13 +467,13 @@ class CDLL(object):
 
 if os.name == 'nt':
     class WinDLL(CDLL):
-        def getpointer(self, name, argtypes, restype, flags=FUNCFLAG_STDCALL):
+        def getpointer(self, name, argtypes, restype, flags=FUNCFLAG_STDCALL, variadic_args=0):
             return Func(name, argtypes, restype, dlsym(self.lib, name),
-                        flags=flags, keepalive=self)
+                        flags=flags, keepalive=self, variadic_args=variadic_args)
         def getpointer_by_ordinal(self, name, argtypes, restype,
-                                  flags=FUNCFLAG_STDCALL):
+                                  flags=FUNCFLAG_STDCALL, variadic_args=0):
             return Func(name, argtypes, restype, dlsym_byordinal(self.lib, name),
-                        flags=flags, keepalive=self)
+                        flags=flags, keepalive=self, variadic_args=variadic_args)
 
 # ======================================================================
 

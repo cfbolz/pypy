@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import sys, py
 
 from rpython.tool.sourcetools import func_with_new_name
@@ -87,7 +89,7 @@ def ll_meta_interp(function, args, backendopt=False,
     return jittify_and_run(interp, graph, args, backendopt=backendopt, **kwds)
 
 def jittify_and_run(interp, graph, args, repeat=1, graph_and_interp_only=False,
-                    backendopt=False, trace_limit=sys.maxint, inline=False,
+                    backendopt=False, trace_limit=2**14, inline=False,
                     loop_longevity=0, retrace_limit=5, function_threshold=4,
                     disable_unrolling=sys.maxint,
                     enable_opts=ALL_OPTS_NAMES, max_retrace_guards=15,
@@ -127,9 +129,9 @@ def jittify_and_run(interp, graph, args, repeat=1, graph_and_interp_only=False,
         warmrunnerdesc.metainterp_sd.jitlog.finish()
         warmrunnerdesc.metainterp_sd.profiler.finish()
         warmrunnerdesc.metainterp_sd.cpu.finish_once()
-    print '~~~ return value:', repr(res)
+    print('~~~ return value:', repr(res))
     while repeat > 1:
-        print '~' * 79
+        print('~' * 79)
         res1 = interp.eval_graph(graph, args)
         if isinstance(res, int):
             assert res1 == res
@@ -254,8 +256,7 @@ class WarmRunnerDesc(object):
         elif self.opt.listops:
             self.prejit_optimizations_minimal_inline(policy, graphs)
 
-        self.build_meta_interp(ProfilerClass,
-                             translator.config.translation.jit_opencoder_model)
+        self.build_meta_interp(ProfilerClass)
         self.make_args_specifications()
         #
         from rpython.jit.metainterp.virtualref import VirtualRefInfo
@@ -499,16 +500,11 @@ class WarmRunnerDesc(object):
             cpu.supports_singlefloats = False
         self.cpu = cpu
 
-    def build_meta_interp(self, ProfilerClass, opencoder_model):
-        from rpython.jit.metainterp.opencoder import Model, BigModel
+    def build_meta_interp(self, ProfilerClass):
         self.metainterp_sd = MetaInterpStaticData(self.cpu,
                                                   self.opt,
                                                   ProfilerClass=ProfilerClass,
                                                   warmrunnerdesc=self)
-        if opencoder_model == 'big':
-            self.metainterp_sd.opencoder_model = BigModel
-        else:
-            self.metainterp_sd.opencoder_model = Model
         self.stats.metainterp_sd = self.metainterp_sd
 
     def make_hooks(self, hooks):
@@ -570,8 +566,8 @@ class WarmRunnerDesc(object):
                 raise     # go through
             except Exception as e:
                 if not we_are_translated():
-                    print "~~~ Crash in JIT!"
-                    print '~~~ %s: %s' % (e.__class__, e)
+                    print("~~~ Crash in JIT!")
+                    print('~~~ %s: %s' % (e.__class__, e))
                     if sys.stdout == sys.__stdout__:
                         import pdb; pdb.post_mortem(tb)
                     raise e.__class__, e, tb
@@ -695,7 +691,7 @@ class WarmRunnerDesc(object):
                 jitdrivers_by_name[name] = jd
         m = _find_jit_markers(self.translator.graphs,
                               ('get_jitcell_at_key', 'trace_next_iteration',
-                               'dont_trace_here', 'trace_next_iteration_hash'))
+                               'dont_trace_here', 'trace_next_iteration_hash', 'mark_as_being_traced'))
         accessors = {}
 
         def get_accessor(name, jitdriver_name, function, ARGS, green_arg_spec):
@@ -747,6 +743,8 @@ class WarmRunnerDesc(object):
                 func = JitCell.get_jitcell
             elif op.args[0].value == 'dont_trace_here':
                 func = JitCell.dont_trace_here
+            elif op.args[0].value == 'mark_as_being_traced':
+                func = JitCell.mark_as_being_traced
             elif op.args[0].value == 'trace_next_iteration_hash':
                 func = JitCell.trace_next_iteration_hash
             else:
@@ -1077,6 +1075,8 @@ class WarmRunnerDesc(object):
 
     def add_finish(self):
         def finish():
+            from rpython.jit.metainterp.optimizeopt.intbounds import print_rewrite_rule_statistics
+            print_rewrite_rule_statistics()
             if self.metainterp_sd.profiler.initialized:
                 self.metainterp_sd.profiler.finish()
             self.metainterp_sd.cpu.finish_once()

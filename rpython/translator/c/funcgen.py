@@ -397,45 +397,6 @@ class FunctionCodeGenerator(object):
 
     # ____________________________________________________________
 
-    # the C preprocessor cannot handle operations taking a variable number
-    # of arguments, so here are Python methods that do it
-
-    def OP_NEWLIST(self, op):
-        args = [self.expr(v) for v in op.args]
-        r = self.expr(op.result)
-        if len(args) == 0:
-            return 'OP_NEWLIST0(%s);' % (r, )
-        else:
-            args.insert(0, '%d' % len(args))
-            return 'OP_NEWLIST((%s), %s);' % (', '.join(args), r)
-
-    def OP_NEWDICT(self, op):
-        args = [self.expr(v) for v in op.args]
-        r = self.expr(op.result)
-        if len(args) == 0:
-            return 'OP_NEWDICT0(%s);' % (r, )
-        else:
-            assert len(args) % 2 == 0
-            args.insert(0, '%d' % (len(args)//2))
-            return 'OP_NEWDICT((%s), %s);' % (', '.join(args), r)
-
-    def OP_NEWTUPLE(self, op):
-        args = [self.expr(v) for v in op.args]
-        r = self.expr(op.result)
-        args.insert(0, '%d' % len(args))
-        return 'OP_NEWTUPLE((%s), %s);' % (', '.join(args), r)
-
-    def OP_SIMPLE_CALL(self, op):
-        args = [self.expr(v) for v in op.args]
-        r = self.expr(op.result)
-        args.append('NULL')
-        return 'OP_SIMPLE_CALL((%s), %s);' % (', '.join(args), r)
-
-    def OP_CALL_ARGS(self, op):
-        args = [self.expr(v) for v in op.args]
-        r = self.expr(op.result)
-        return 'OP_CALL_ARGS((%s), %s);' % (', '.join(args), r)
-
     def generic_call(self, FUNC, fnexpr, args_v, v_result, targets=None):
         args = []
         assert len(args_v) == len(FUNC.TO.ARGS)
@@ -528,25 +489,36 @@ class FunctionCodeGenerator(object):
                 result = gencsupp.emit_void(result)
         return result
 
+    def _field_stat(self, op, structdef, access_kind):
+        prefix = ''
+        if self.db.all_field_names is not None:
+            if hasattr(structdef, 'c_struct_field_name'):
+                fieldname = structdef.c_struct_field_name(op.args[1].value)
+                self.db.all_field_names.add(fieldname)
+                prefix = 'rpy_access_stats.%s_%s++;\n' % (fieldname, access_kind)
+        return prefix
+
     def OP_GETFIELD(self, op, ampersand='', accessing_mem=True):
         assert isinstance(op.args[1], Constant)
         STRUCT = self.lltypemap(op.args[0]).TO
         structdef = self.db.gettypedefnode(STRUCT)
         baseexpr_is_const = isinstance(op.args[0], Constant)
+        prefix = self._field_stat(op, structdef, "read")
         expr = ampersand + structdef.ptr_access_expr(self.expr(op.args[0]),
                                                      op.args[1].value,
                                                      baseexpr_is_const)
-        return self.generic_get(op, expr, accessing_mem=accessing_mem)
+        return prefix + self.generic_get(op, expr, accessing_mem=accessing_mem)
 
     def OP_BARE_SETFIELD(self, op):
         assert isinstance(op.args[1], Constant)
         STRUCT = self.lltypemap(op.args[0]).TO
         structdef = self.db.gettypedefnode(STRUCT)
         baseexpr_is_const = isinstance(op.args[0], Constant)
+        prefix = self._field_stat(op, structdef, "write")
         expr = structdef.ptr_access_expr(self.expr(op.args[0]),
                                          op.args[1].value,
                                          baseexpr_is_const)
-        return self.generic_set(op, expr)
+        return prefix + self.generic_set(op, expr)
 
     def OP_GETSUBSTRUCT(self, op):
         RESULT = self.lltypemap(op.result).TO

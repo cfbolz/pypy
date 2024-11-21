@@ -55,6 +55,16 @@ static int count_mallocs=0, count_frees=0;
 #endif /* COUNT_OP_MALLOCS */
 
 
+#ifndef RPY_COUNT_FIELDACCESS
+
+#define pypy_print_field_stats() /* nothing */
+
+#else /* RPY_COUNT_FIELDACCESS */
+
+#define pypy_print_field_stats() _pypy_print_field_stats()
+
+#endif /* RPY_COUNT_FIELDACCESS */
+
 /*** tracking raw mallocs and frees for debugging ***/
 
 #ifndef RPY_ASSERT
@@ -161,6 +171,7 @@ RPY_EXTERN void *boehm_fq_next_dead(struct boehm_fq_s **);
 #define OP_GC_DUMP_RPY_HEAP(fd, r)       r = 0
 #define OP_GC_SET_EXTRA_THRESHOLD(x, r)  /* nothing */
 #define OP_GC_IGNORE_FINALIZER(x, r)     /* nothing */
+#define OP_GC_INCREASE_ROOT_STACK_DEPTH(x, r)   /* nothing */
 
 /****************************/
 /* misc stuff               */

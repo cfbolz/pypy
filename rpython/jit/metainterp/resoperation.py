@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import weakref, os
 from rpython.rlib.objectmodel import we_are_translated, specialize
 from rpython.rtyper.lltypesystem.lloperation import llop
@@ -137,7 +139,7 @@ def vector_repr(self, num):
         return 'v' + str(num)
     if hasattr(self, '_vec_debug_info'):
         vecinfo = self._vec_debug_info
-        count = vecinfo.count 
+        count = vecinfo.count
         datatype = vecinfo.datatype
         bytesize = vecinfo.bytesize
     elif self.vector == -2:
@@ -322,7 +324,7 @@ class AbstractResOp(AbstractResOpOrInputArg):
         "shallow copy: the returned operation is meant to be used in place of self"
         # XXX specialize
         from rpython.jit.metainterp.history import DONT_CHANGE
-        
+
         if args is None:
             args = self.getarglist_copy()
         if descr is None:
@@ -574,9 +576,6 @@ class IntOp(object):
     def setint(self, intval):
         self._resint = intval
 
-    def copy_value_from(self, other):
-        self.setint(other.getint())
-
     def constbox(self):
         from rpython.jit.metainterp import history
         return history.ConstInt(self.getint())
@@ -602,9 +601,6 @@ class FloatOp(object):
     def setfloatstorage(self, floatval):
         assert lltype.typeOf(floatval) is longlong.FLOATSTORAGE
         self._resfloat = floatval
-
-    def copy_value_from(self, other):
-        self.setfloatstorage(other.getfloatstorage())
 
     def constbox(self):
         from rpython.jit.metainterp import history
@@ -637,9 +633,6 @@ class RefOp(object):
     def getref(self, PTR):
         return lltype.cast_opaque_ptr(PTR, self.getref_base())
     getref._annspecialcase_ = 'specialize:arg(1)'
-
-    def copy_value_from(self, other):
-        self.setref_base(other.getref_base())
 
     def nonnull(self):
         return bool(self._resref)
@@ -946,6 +939,7 @@ _oplist = [
     'GUARD_NOT_FORCED_2/0d/n',    # same as GUARD_NOT_FORCED, but for finish()
     'GUARD_NOT_INVALIDATED/0d/n',
     'GUARD_FUTURE_CONDITION/0d/n',
+    'GUARD_ALWAYS_FAILS/0d/n',    # to end really long traces
     # is removable, may be patched by an optimization
     '_GUARD_LAST', # ----- end of guard operations -----
 
@@ -1143,6 +1137,8 @@ _oplist = [
     'QUASIIMMUT_FIELD/1d/n',    # [objptr], descr=SlowMutateDescr
     'ASSERT_NOT_NONE/1/n',      # [objptr]
     'RECORD_EXACT_CLASS/2/n',   # [objptr, clsptr]
+    'RECORD_EXACT_VALUE_R/2/n',   # [objptr, objptr]
+    'RECORD_EXACT_VALUE_I/2/n',   # [int, int]
     'KEEPALIVE/1/n',
     'SAVE_EXCEPTION/0/r',
     'SAVE_EXC_CLASS/0/i',       # XXX kill me
@@ -1165,6 +1161,8 @@ _oplist = [
     # nursery malloc, non-const number of bytes, zeroed
     # note that the number of bytes must be well known to be small enough
     # to fulfill allocating in the nursery rules (and no card markings)
+
+    'RECORD_KNOWN_RESULT/*d/n',   # arguments known_result, funcarg1, funcarg2, funcarg3, descr is calldescr
     '_CALL_LAST',
     '_CANRAISE_LAST', # ----- end of can_raise operations -----
 
@@ -1371,10 +1369,12 @@ class rop(object):
         return rop._JIT_DEBUG_FIRST <= opnum <= rop._JIT_DEBUG_LAST
 
     @staticmethod
+    @specialize.arg_or_var(0)
     def is_always_pure(opnum):
         return rop._ALWAYS_PURE_FIRST <= opnum <= rop._ALWAYS_PURE_LAST
 
     @staticmethod
+    @specialize.arg_or_var(0)
     def is_pure_with_descr(opnum, descr):
         if rop.is_always_pure(opnum):
             return True
@@ -1625,7 +1625,7 @@ def setup(debug_print=False):
                 opwithdescr.append(withdescr)
                 optypes.append(r)
                 if debug_print:
-                    print '%30s = %d' % (cls_name, i)
+                    print('%30s = %d' % (cls_name, i))
                 i += 1
         else:
             setattr(rop, name, i)
@@ -1634,7 +1634,7 @@ def setup(debug_print=False):
             opwithdescr.append(False)
             optypes.append(' ')
             if debug_print:
-                print '%30s = %d' % (name, i)
+                print('%30s = %d' % (name, i))
             i += 1
     # for optimizeopt/pure.py's getrecentops()
     assert (rop.INT_ADD_OVF - rop._OVF_FIRST ==

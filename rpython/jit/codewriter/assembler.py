@@ -26,12 +26,18 @@ class Assembler(object):
         self._descr_dict = {}
         self._count_jitcodes = 0
         self._seen_raw_objects = set()
+        self.all_liveness = []
+        self.all_liveness_length = 0
+        self.all_liveness_positions = {}
+        self.num_liveness_ops = 0
 
-    def assemble(self, ssarepr, jitcode=None):
+    def assemble(self, ssarepr, jitcode=None, num_regs=None):
         """Take the 'ssarepr' representation of the code and assemble
         it inside the 'jitcode'.  If jitcode is None, make a new one.
         """
         self.setup(ssarepr.name)
+        if num_regs is not None:
+            self.count_regs.update(num_regs)
         ssarepr._insns_pos = []
         for insn in ssarepr.insns:
             ssarepr._insns_pos.append(len(self.code))
@@ -64,12 +70,16 @@ class Assembler(object):
         self.ssareprname = name
 
     def emit_reg(self, reg):
+        assert reg.index < self.count_regs[reg.kind]
+        self.code.append(chr(reg.index))
+
+    def count_reg(self, reg):
         if reg.index >= self.count_regs[reg.kind]:
             self.count_regs[reg.kind] = reg.index + 1
-        self.code.append(chr(reg.index))
 
     def emit_const(self, const, kind, allow_short=False):
         value = const.value
+        value_key = value
         if kind == 'int':
             TYPE = const.concretetype
             if isinstance(TYPE, lltype.Ptr):
@@ -99,6 +109,11 @@ class Assembler(object):
         elif kind == 'ref':
             value = lltype.cast_opaque_ptr(llmemory.GCREF, value)
             constants = self.constants_r
+            if not value:
+                # nullptr
+                value_key = None
+            else:
+                value_key = value._obj.container
         elif kind == 'float':
             if const.concretetype == lltype.Float:
                 value = longlong.getfloatstorage(value)
@@ -109,15 +124,17 @@ class Assembler(object):
         else:
             raise AssemblerError('unimplemented %r in %r' %
                                  (const, self.ssareprname))
-        key = (kind, Constant(value))
-        if key not in self.constants_dict:
+        key = (kind, Constant(value_key))
+        try:
+            val = self.constants_dict[key]
+        except KeyError:
             constants.append(value)
-            val = 256 - len(constants)
-            assert val >= 0, "too many constants"
+            val = self.count_regs[kind] + len(constants) - 1
+            assert 0 <= val < 256, "too many constants"
             self.constants_dict[key] = val
         # emit the constant normally, as one byte that is an index in the
         # list of constants
-        self.code.append(chr(self.constants_dict[key]))
+        self.code.append(chr(val))
         return False
 
     def write_insn(self, insn):
@@ -128,11 +145,16 @@ class Assembler(object):
             return
         if insn[0] == '-live-':
             key = len(self.code)
-            live_i, live_r, live_f = self.liveness.get(key, ("", "", ""))
-            live_i = self.get_liveness_info(live_i, insn[1:], 'int')
-            live_r = self.get_liveness_info(live_r, insn[1:], 'ref')
-            live_f = self.get_liveness_info(live_f, insn[1:], 'float')
+            self.startpoints.add(key)
+            self.num_liveness_ops += 1
+            live_i = self.get_liveness_info(insn[1:], 'int')
+            live_r = self.get_liveness_info(insn[1:], 'ref')
+            live_f = self.get_liveness_info(insn[1:], 'float')
+            assert key not in self.liveness
             self.liveness[key] = live_i, live_r, live_f
+            num = self.insns.setdefault('live/', len(self.insns))
+            self.code.append(chr(num))
+            self._encode_liveness(live_i, live_r, live_f)
             return
         startposition = len(self.code)
         self.code.append("temporary placeholder")
@@ -200,16 +222,30 @@ class Assembler(object):
         self.code[startposition] = chr(num)
         self.startpoints.add(startposition)
 
-    def get_liveness_info(self, prevlives, args, kind):
-        """Return a string whose characters are register numbers.
-        We sort the numbers, too, to increase the chances of duplicate
-        strings (which are collapsed into a single string during translation).
+    def get_liveness_info(self, args, kind):
+        """Return a set whose characters are register numbers.
         """
-        lives = set(prevlives)    # set of characters
+        lives = set()    # set of characters
         for reg in args:
             if isinstance(reg, Register) and reg.kind == kind:
                 lives.add(chr(reg.index))
         return lives
+
+    def _encode_liveness(self, live_i, live_r, live_f):
+        from rpython.jit.codewriter.liveness import encode_offset, encode_liveness
+        key = (frozenset(live_i), frozenset(live_r), frozenset(live_f))
+        try:
+            pos = self.all_liveness_positions[key]
+        except KeyError:
+            pos = self.all_liveness_positions[key] = self.all_liveness_length
+            self.all_liveness.append(chr(len(live_i)) + chr(len(live_r)) + chr(len(live_f)))
+            self.all_liveness_length += 3
+            for live in live_i, live_r, live_f:
+                liveness = encode_liveness(live)
+                if liveness:
+                    self.all_liveness.append(liveness)
+                    self.all_liveness_length += len(liveness)
+        encode_offset(pos, self.code)
 
     def fix_labels(self):
         for name, pos in self.tlabel_positions:
@@ -240,7 +276,6 @@ class Assembler(object):
                       self.count_regs['int'],
                       self.count_regs['ref'],
                       self.count_regs['float'],
-                      liveness=self.liveness,
                       startpoints=self.startpoints,
                       alllabels=self.alllabels,
                       resulttypes=self.resulttypes)

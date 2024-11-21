@@ -3,7 +3,7 @@ from rpython.rlib import jit
 from rpython.rtyper import rint
 from rpython.rtyper.error import TyperError
 from rpython.rtyper.lltypesystem.lltype import Signed, Bool, Void, UniChar
-from rpython.rtyper.lltypesystem import lltype
+from rpython.rtyper.lltypesystem import lltype, llmemory
 from rpython.rtyper.rmodel import IteratorRepr, inputconst, Repr
 from rpython.rtyper.rint import IntegerRepr
 from rpython.rtyper.rfloat import FloatRepr
@@ -287,18 +287,18 @@ class AbstractStringRepr(Repr):
         v_length, v_items = self._list_length_items(hop, v_lst, r_lst.lowleveltype)
 
         if hop.args_s[0].is_constant() and hop.args_s[0].const == '':
-            if r_lst.item_repr == rstr.repr:
+            v_tp = hop.inputconst(Void, self.lowleveltype)
+            if r_lst.external_item_repr == rstr.repr:
                 llfn = self.ll.ll_join_strs
+                return hop.gendirectcall(llfn, v_length, v_items, v_tp)
             elif (r_lst.item_repr == char_repr or
                   r_lst.item_repr == unichar_repr):
-                v_tp = hop.inputconst(Void, self.lowleveltype)
                 return hop.gendirectcall(self.ll.ll_join_chars, v_length,
                                          v_items, v_tp)
             else:
                 raise TyperError("''.join() of non-string list: %r" % r_lst)
-            return hop.gendirectcall(llfn, v_length, v_items)
         else:
-            if r_lst.item_repr == rstr.repr:
+            if r_lst.external_item_repr == rstr.repr:
                 llfn = self.ll.ll_join
             else:
                 raise TyperError("sep.join() of non-string list: %r" % r_lst)
@@ -720,6 +720,15 @@ class __extend__(pairtype(AbstractCharRepr, IntegerRepr),
         return hop.gendirectcall(r_chr.ll.ll_char_mul, v_char, v_int)
     rtype_inplace_mul = rtype_mul
 
+    def rtype_getitem((r_char, r_int), hop, checkidx=False):
+        if hop.args_s[1].is_constant() and hop.args_s[1].const == 0:
+            hop.exception_cannot_occur()
+            return hop.inputarg(hop.r_result, arg=0)
+        # do the slow thing (super would be cool)
+        paircls = pairtype(AbstractStringRepr, IntegerRepr)
+        return paircls.rtype_getitem(pair(r_char, r_int), hop, checkidx)
+
+
 class __extend__(pairtype(IntegerRepr, AbstractCharRepr),
                  pairtype(IntegerRepr, AbstractUniCharRepr)):
     def rtype_mul((r_int, r_chr), hop):
@@ -1017,6 +1026,7 @@ class AbstractLLHelpers(object):
         i = 0
         j = 0
         # The annotator makes sure this list is resizable.
+        ITEM = LIST.items.TO.OF
         res = LIST.ll_newlist(0)
         while j < strlen:
             while i < strlen and s[i] != '\n' and s[i] != '\r':
@@ -1032,11 +1042,11 @@ class AbstractLLHelpers(object):
             list_length = res.ll_length()
             res._ll_resize_ge(list_length + 1)
             item = cls.ll_stringslice_startstop(ll_str, j, eol)
-            res.ll_setitem_fast(list_length, item)
+            res.ll_setitem_fast(list_length, llmemory.cast_any_ptr(ITEM, item))
             j = i
         if j < strlen:
             list_length = res.ll_length()
             res._ll_resize_ge(list_length + 1)
             item = cls.ll_stringslice_startstop(ll_str, j, strlen)
-            res.ll_setitem_fast(list_length, item)
+            res.ll_setitem_fast(list_length, llmemory.cast_any_ptr(ITEM, item))
         return res

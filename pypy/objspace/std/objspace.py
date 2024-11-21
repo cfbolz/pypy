@@ -3,8 +3,8 @@ from pypy.interpreter import special
 from pypy.interpreter.baseobjspace import ObjSpace, W_Root
 from pypy.interpreter.error import OperationError, oefmt
 from pypy.interpreter.typedef import get_unique_interplevel_subclass
-from pypy.objspace.std import frame, transparent, callmethod
 from pypy.objspace.descroperation import DescrOperation, raiseattrerror
+from pypy.objspace.std import frame, transparent, callmethod
 from rpython.rlib.objectmodel import instantiate, specialize, is_annotation_constant
 from rpython.rlib.debug import make_sure_not_resized
 from rpython.rlib.rarithmetic import base_int, widen, is_valid_int
@@ -139,7 +139,10 @@ class StdObjSpace(ObjSpace):
             w_currently_in_repr = ec._py_repr = W_IdentityDict(self)
         return w_currently_in_repr
 
+    @specialize.memo()
     def gettypefor(self, cls):
+        if not hasattr(cls, "typedef") or cls.typedef is None:
+            return None
         return self.gettypeobject(cls.typedef)
 
     def gettypeobject(self, typedef):
@@ -261,6 +264,7 @@ class StdObjSpace(ObjSpace):
 
     @specialize.argtype(1)
     def newint(self, intval):
+        from rpython.rlib.rarithmetic import r_uint, maxint, intmask
         if self.config.objspace.std.withsmalllong and isinstance(intval, base_int):
             from pypy.objspace.std.smalllongobject import W_SmallLongObject
             from rpython.rlib.rarithmetic import r_longlong, r_ulonglong
@@ -301,6 +305,10 @@ class StdObjSpace(ObjSpace):
         assert isinstance(list_w, list)
         make_sure_not_resized(list_w)
         return wraptuple(self, list_w)
+
+    def newtuple2(self, w_a, w_b):
+        from pypy.objspace.std.tupleobject import wraptuple2
+        return wraptuple2(self, w_a, w_b)
 
     def newlist(self, list_w, sizehint=-1):
         assert not list_w or sizehint == -1
@@ -357,14 +365,28 @@ class StdObjSpace(ObjSpace):
         assert isinstance(s, str)
         return W_BytesObject(s)
 
+    @specialize.arg_or_var(1)
     def newtext(self, s):
         assert isinstance(s, str)
+        if is_annotation_constant(s):
+            return self._newtext_memo(s)
         return W_BytesObject(s) # Python3 this is unicode
 
     def newtext_or_none(self, s):
         if s is None:
             return self.w_None
         return self.newtext(s)
+
+    @specialize.memo()
+    def _newtext_memo(self, s):
+        if s is None:
+            return self.w_None # can happen during annotation
+        # try to see whether we exist as an interned string, but don't intern
+        # if not
+        w_t = self.interned_strings.get(s)
+        if w_t is not None:
+            return w_t
+        return W_BytesObject(s)
 
     def newutf8(self, utf8s, length):
         assert utf8s is not None
@@ -452,10 +474,17 @@ class StdObjSpace(ObjSpace):
         if isinstance(w_obj, W_AbstractTupleObject) and self._uses_tuple_iter(w_obj):
             t = w_obj.tolist()
         elif type(w_obj) is W_ListObject:
+            length = w_obj.length()
+            if expected_length >= 0:
+                if length != expected_length:
+                    raise self._wrap_expected_length(expected_length, length)
+                if jit.isconstant(expected_length):
+                    jit.promote(length)
             if unroll:
                 t = w_obj.getitems_unroll()
             else:
                 t = w_obj.getitems_fixedsize()
+            return make_sure_not_resized(t)
         else:
             if unroll:
                 return make_sure_not_resized(ObjSpace.unpackiterable_unroll(
@@ -634,6 +663,28 @@ class StdObjSpace(ObjSpace):
             raise e
         else:
             raiseattrerror(self, w_obj, name)
+
+    def setattr(space, w_obj, w_name, w_value):
+        w_type = space.type(w_obj)
+        w_descr = w_type.setattr_if_not_from_object()
+        if w_descr is not None:
+            return space.get_and_call_function(w_descr, w_obj, w_name, w_value)
+        # inlined logic from Object.descr__setattr__
+        name = space.text_w(w_name)
+        w_descr = w_type.lookup(name)
+        if w_descr is not None:
+            # shortcut for:
+            # if space.is_data_descr(w_descr):
+            #     return space.set(w_descr, w_obj, w_value)
+            w_set = space.lookup(w_descr, '__set__')
+            if w_set is not None:
+                return space.get_and_call_function(w_set, w_descr, w_obj, w_value)
+            if space.lookup(w_descr, '__delete__') is not None:
+                raise oefmt(space.w_AttributeError,
+                            "'%T' object is not a descriptor with set", w_descr)
+        if w_obj.setdictvalue(space, name, w_value):
+            return
+        raiseattrerror(space, w_obj, name, w_descr)
 
     def finditem_str(self, w_obj, key):
         """ Perform a getitem on w_obj with key (string). Returns found

@@ -41,6 +41,7 @@ class FakeLogger(object):
 class FakeState(object):
     enable_opts = ALL_OPTS_DICT.copy()
     enable_opts.pop('unroll')
+    pureop_historylength = 16
 
     def attach_unoptimized_bridge_from_interp(*args):
         pass
@@ -96,14 +97,14 @@ def test_compile_loop():
     metainterp = FakeMetaInterp()
     metainterp.staticdata = staticdata
     metainterp.cpu = cpu
-    metainterp.history = History()
+    metainterp.history = History(len(loop.inputargs), staticdata)
     t = convert_loop_to_trace(loop, staticdata)
     metainterp.history.inputargs = t.inputargs
     metainterp.history.trace = t
     #
     greenkey = 'faked'
     target_token = compile_loop(
-        metainterp, greenkey, (0, 0, 0), t.inputargs,
+        metainterp, greenkey, (0, 0, 0, 0, 0), t.inputargs,
         [t._mapping[x] for x in loop.operations[-1].getarglist()],
         use_unroll=False)
     jitcell_token = target_token.targeting_jitcell_token

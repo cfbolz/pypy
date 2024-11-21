@@ -5,7 +5,7 @@ from rpython.jit.metainterp.optimize import InvalidLoop
 from rpython.jit.metainterp.optimizeopt import info, optimizer
 from rpython.jit.metainterp.optimizeopt.optimizer import REMOVED
 from rpython.jit.metainterp.optimizeopt.util import (
-    make_dispatcher_method, get_box_replacement)
+    make_dispatcher_method, have_dispatcher_method, get_box_replacement)
 from rpython.jit.metainterp.optimizeopt.rawbuffer import InvalidRawOperation
 from .info import getrawptrinfo, getptrinfo
 from rpython.jit.metainterp.resoperation import rop, ResOperation
@@ -211,19 +211,17 @@ class OptVirtualize(optimizer.Optimization):
     def optimize_NEW(self, op):
         self.make_vstruct(op.getdescr(), op)
 
-    def optimize_NEW_ARRAY(self, op):
-        sizebox = self.get_constant_box(op.getarg(0))
+    def optimize_NEW_ARRAY(self, op, clear=False):
+        arg = op.getarg(0)
+        sizebox = self.get_constant_box(arg)
         if (sizebox is not None and
-            self.make_varray(op.getdescr(), sizebox.getint(), op)):
+            self.make_varray(op.getdescr(), sizebox.getint(), op, clear=clear)):
             return
+        self.pure_from_args(rop.ARRAYLEN_GC, [op], arg, descr=op.getdescr())
         return self.emit(op)
 
     def optimize_NEW_ARRAY_CLEAR(self, op):
-        sizebox = self.get_constant_box(op.getarg(0))
-        if (sizebox is not None and
-            self.make_varray(op.getdescr(), sizebox.getint(), op, clear=True)):
-            return
-        return self.emit(op)
+        return self.optimize_NEW_ARRAY(op, clear=True)
 
     def optimize_CALL_N(self, op):
         effectinfo = op.getdescr().get_extra_info()
@@ -422,3 +420,4 @@ dispatch_opt = make_dispatcher_method(OptVirtualize, 'optimize_',
 OptVirtualize.propagate_forward = dispatch_opt
 dispatch_postprocess = make_dispatcher_method(OptVirtualize, 'postprocess_')
 OptVirtualize.propagate_postprocess = dispatch_postprocess
+OptVirtualize.have_postprocess_op = have_dispatcher_method(OptVirtualize, 'postprocess_')

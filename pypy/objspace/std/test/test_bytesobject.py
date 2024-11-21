@@ -502,8 +502,6 @@ class AppTestBytesObject:
 
     def test_expandtabs_overflows_gracefully(self):
         import sys
-        if sys.maxint > (1 << 32):
-            skip("Wrong platform")
         raises((MemoryError, OverflowError), b't\tt\t'.expandtabs, sys.maxint)
 
     def test_expandtabs_0(self):
@@ -636,7 +634,6 @@ class AppTestBytesObject:
     def test_unicode_join_str_arg_ascii(self):
         raises(UnicodeDecodeError, u''.join, ['\xc3\xa1'])
 
-    @pytest.mark.xfail(reason='setdefaultencoding does not work?')
     def test_unicode_join_str_arg_utf8(self):
         # Need default encoding utf-8, but sys.setdefaultencoding
         # is removed after startup.
@@ -885,9 +882,9 @@ class AppTestBytesObject:
                 assert x.rindex(y) == 0
                 assert x.split(y) == ['', '']
                 assert x.rsplit(y) == ['', '']
-                assert x.strip(y) == ''
-                assert x.rstrip(y) == ''
-                assert x.lstrip(y) == ''
+                assert x.strip(y) == u''
+                assert x.rstrip(y) == u''
+                assert x.lstrip(y) == u''
 
     def test_replace_overflow(self):
         import sys

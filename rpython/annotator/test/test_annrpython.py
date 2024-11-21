@@ -1,4 +1,4 @@
-from __future__ import with_statement
+from __future__ import with_statement, print_function
 import py.test
 import sys
 from collections import OrderedDict
@@ -997,7 +997,7 @@ class TestAnnotateTestCase:
         # check that the list produced by range() is not mutated or resized
         graph = graphof(a, snippet.harmonic)
         all_vars = set().union(*[block.getvariables() for block in graph.iterblocks()])
-        print all_vars
+        print(all_vars)
         for var in all_vars:
             s_value = var.annotation
             if isinstance(s_value, annmodel.SomeList):
@@ -1077,8 +1077,8 @@ class TestAnnotateTestCase:
         assert s == annmodel.SomeInteger(nonneg = True, unsigned = True)
 
 
-    def test_prebuilt_long_that_is_not_too_long(self):
-        small_constant = 12L
+    def test_prebuilt_int_that_is_not_too_long(self):
+        small_constant = 12
         def f():
             return small_constant
         a = self.RPythonAnnotator()
@@ -1087,7 +1087,7 @@ class TestAnnotateTestCase:
         assert s.nonneg
         assert not s.unsigned
         #
-        small_constant = -23L
+        small_constant = -23
         def f():
             return small_constant
         a = self.RPythonAnnotator()
@@ -3314,6 +3314,54 @@ class TestAnnotateTestCase:
         a = self.RPythonAnnotator()
         py.test.raises(AnnotatorError, a.build_types, f, [])
 
+    def test_access_direct_eq_False(self):
+        from rpython.rlib import jit, debug
+        class Root:
+            def f(self):
+                debug.check_not_access_directly(self)
+        class Frame(Root):
+            _virtualizable_ = []
+            def meth(self):
+                self = jit.hint(self, access_directly=False)
+                return self.f()
+        class C(Root):
+            def meth(self):
+                return self.f()
+
+        def f(n):
+            if n == 0:
+                x = Frame()
+                x = jit.hint(x, access_directly=True)
+            else:
+                x = C()
+            x.meth()
+        a = self.RPythonAnnotator()
+        a.build_types(f, [int])
+
+    def test_access_direct_no_virtualizable(self):
+        from rpython.rlib import jit, debug
+        class Root:
+            def f(self):
+                debug.check_not_access_directly(self)
+        class Frame(Root):
+            # not a virtualizble
+            def meth(self):
+                return self.f()
+        class C(Root):
+            def meth(self):
+                return self.f()
+
+        def f(n):
+            if n == 0:
+                x = Frame()
+                x = jit.hint(x, access_directly=True, fresh_virtualizable=True)
+                x.foo = 1
+            else:
+                x = C()
+            x.meth()
+        a = self.RPythonAnnotator()
+        a.build_types(f, [int])
+
     def test_weakref(self):
         import weakref
 
@@ -3740,6 +3788,16 @@ class TestAnnotateTestCase:
         s = a.build_types(f, [])
         assert isinstance(s, annmodel.SomeChar)
 
+    def test_enumerate_startindex(self):
+        def f():
+            for i, x in enumerate(['a', 'b', 'c', 'd'], 5):
+                if i == 7:
+                    return x
+            return '?'
+        a = self.RPythonAnnotator()
+        s = a.build_types(f, [])
+        assert isinstance(s, annmodel.SomeChar)
+
     def test_context_manager(self):
         class C:
             def __init__(self):
@@ -4149,12 +4207,30 @@ class TestAnnotateTestCase:
                 x1 = x
             else:
                 x1 = None
-            print "hello" # this is to force the merge of blocks
+            print("hello")  # this is to force the merge of blocks
             return isinstance(x1, X)
 
         a = self.RPythonAnnotator()
         s = a.build_types(f, [annmodel.SomeInteger()])
         assert isinstance(s, annmodel.SomeBool)
+
+    def test_doing_bad_things_with_print(self):
+
+        def f():
+            pronto = print
+            return pronto("the quick brown fox")
+
+        a = self.RPythonAnnotator()
+        s = a.build_types(f, [])  # We worked out the pronto function was print
+        assert isinstance(s, annmodel.SomeNone)
+
+        def g():
+            print = int
+            return print(3.0)
+
+        a = self.RPythonAnnotator()
+        s = a.build_types(g, [])
+        assert isinstance(s, annmodel.SomeInteger)
 
     def test_object_init(self):
         class A(object):
@@ -4691,6 +4767,25 @@ class TestAnnotateTestCase:
         # a.bar and b.bar are the same function -> OK
         s = ann.build_types(g, [int])
         assert s.const == 43
+
+    def test_isinstance_const(self):
+        class A(object):
+            pass
+
+        class B(A):
+            pass
+        B.singleton = B()
+        class C(A):
+            pass
+        C.singleton = C()
+        def f():
+            x = B.singleton
+            if not isinstance(x, B):
+                if not isinstance(x, C):
+                    raise TypeError
+            return 12
+        ann = self.RPythonAnnotator()
+        s = ann.build_types(f, [])
 
 
 def g(n):

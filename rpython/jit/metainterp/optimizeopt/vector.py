@@ -4,6 +4,7 @@ to rewrite a loop in vectorized form.
 
 See the rpython doc for more high level details.
 """
+from __future__ import print_function
 
 import py
 import time
@@ -497,7 +498,7 @@ class VectorizingOptimizer(Optimizer):
         if not we_are_translated():
             # some test cases check the accumulation variables
             self.packset.accum_vars = {}
-            print "packs:"
+            print("packs:")
             check = {}
             fail = False
             for pack in self.packset.packs:
@@ -507,7 +508,7 @@ class VectorizingOptimizer(Optimizer):
                     fail = True
                 check[left] = None
                 check[right] = None
-                print " ", pack
+                print(" ", pack)
             if fail:
                 assert False
 
@@ -768,7 +769,11 @@ class PackSet(object):
         left = lnode.getoperation()
         opnum = left.getopnum()
 
-        if opnum in AccumPack.SUPPORTED:
+        try:
+            operator = AccumPack.SUPPORTED(opnum)
+        except KeyError:
+            pass
+        else:
             right = rnode.getoperation()
             assert left.numargs() == 2 and not left.returns_void()
             scalar, index = self.getaccumulator_variable(left, right, origin_pack)
@@ -805,7 +810,6 @@ class PackSet(object):
                 # of leading/preceding signext/floatcast instructions needs to be
                 # considered. => tree pattern matching problem.
                 return None
-            operator = AccumPack.SUPPORTED[opnum]
             return AccumPack([lnode, rnode], operator, index)
         is_guard = left.is_guard() and left.getopnum() in (rop.GUARD_TRUE, rop.GUARD_FALSE)
         if is_guard:
@@ -883,4 +887,3 @@ class PackSet(object):
                 self.packs[i] = None
                 continue
         self.packs = [pack for pack in self.packs + newpacks if pack]
-

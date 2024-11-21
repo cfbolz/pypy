@@ -13,6 +13,7 @@ class AppTestArray(object):
         cls.w_tempfile = cls.space.wrap(
             str(pytest.ensuretemp('array').join('tmpfile')))
         cls.w_maxint = cls.space.wrap(sys.maxint)
+        cls.w_runappdirect = cls.space.wrap(cls.runappdirect)
 
     def test_ctor(self):
         assert len(self.array('c')) == 0
@@ -367,6 +368,7 @@ class AppTestArray(object):
         assert repr(a[2:1:-1]) == "array('i', [20])"
         assert repr(a[2:-1:-1]) == "array('i')"
         assert repr(a[-1:0:-1]) == "array('i', [20, 21])"
+        del a
 
         for a in range(-4, 5):
             for b in range(-4, 5):
@@ -384,6 +386,7 @@ class AppTestArray(object):
                             assert repr(arr) == repr(self.array('i', lst))
                         except ValueError:
                             assert not ok
+                    del arr
 
     def test_getslice_large_step(self):
         import sys
@@ -878,6 +881,8 @@ class AppTestArray(object):
         assert a == b
 
     def test_unicode_outofrange(self):
+        if not self.runappdirect:
+            skip("ll2ctypes cannot represent unichar(sys.maxunicode + 1)")
         input_unicode = u'\x01\u263a\x00\ufeff'
         a = self.array('u', input_unicode)
         b = self.array('u', input_unicode)
@@ -1072,5 +1077,40 @@ class AppTestArray(object):
         raises(TypeError, "a[MyInt(0)]")
         raises(TypeError, "a[MyInt(0):MyInt(5)]")
 
+    def test_index_special_method(self):
+        class MyInt(object):
+            def __init__(self, x):
+                self.x = x
+
+            def __index__(self):
+                return self.x
+
+        a = self.array('i', [1, 2, 3, 4, 5, 6])
+        assert a[MyInt(0)] == 1
+        assert a[MyInt(0):MyInt(5)] == self.array('i', [1, 2, 3, 4, 5])
+
+        a[MyInt(0)] = 2
+        assert a[MyInt(0)] == 2
+        del a[MyInt(0)]
+        assert a == self.array('i', [2, 3, 4, 5, 6])
+
     def test_fresh_array_buffer_str(self):
         assert str(buffer(self.array('i'))) == ''
+
+    def test_mutate_while_slice(self):
+        class X:
+            def __index__(self):
+                del a[:]
+                return 1
+
+        a = self.array('i', [1, 2, 3, 4, 5, 6])
+        length = len(a[:X():2])
+        assert length == 0
+
+        a = self.array('i', [1, 2, 3, 4, 5, 6])
+        length = len(a[:X():2])
+        assert length == 0
+
+        a = self.array('i', [1, 2, 3, 4, 5, 6])
+        length = len(a[:X():2])
+        assert length == 0
